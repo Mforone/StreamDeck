@@ -9,6 +9,7 @@ Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Co
 - **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Tippen auf dem Touchscreen springt die Maus dorthin zurück, wo sie vorher war. Mit der echten Maus lässt sich das Panel ganz normal bedienen und einstellen. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
 - **Einstellungen** (⚙ neben „Mediaplayer“): Reiter *Mixer* legt für die Kanäle 2 bis 8 eine feste App fest, die den Kanal automatisch belegt, sobald sie Ton abgibt, und eine eigene Farbe für die ganze Kanal-Karte. Gibt eine App 10 Sekunden lang keinen Ton ab, wird ihr Kanal wieder frei (einstellbar über `"mixer_idle_seconds"` unter `settings` in `data/config.json`). Zur Auswahl stehen alle Apps, die je Ton abgegeben haben (Verlauf in `data/audio_apps.json`). Reiter *Monitor* zeigt alle Bildschirme mit Auflösung und legt fest, auf welchem das Panel läuft (sofort und bei jedem Start).
 - **Pegelanzeige und Mikrofon** (Kanal 8): umschaltbar zwischen App und Mikrofon; zeigt den Pegel in Echtzeit in dBFS (0 dB = Maximum), grün/gelb/rot. Im Mikrofon-Modus regelt der Kanal die Windows-Eingangslautstärke. Im Hintergrund wird das Standard-Mikrofon überwacht: über dem Schwellwert (Einstellungen, Reiter *Mikrofon*) ertönt ein kurzer Piep, einmal pro Überschreiten.
+- **Uhr** (zwischen Mediaplayer und System): Uhrzeit mit Sekunden und Datum.
 - **Systemmonitor** (rechts unten): Auslastung von CPU, GPU und RAM als Dreiviertelkreis, grün unter 60 %, gelb ab 60 %, rot ab 85 %. RAM zusätzlich in GB. Die GPU wird wie im Task-Manager über die Windows-Leistungsindikatoren gelesen (NVIDIA, AMD, Intel).
 - **Mediaplayer** (rechts oben): zeigt Cover, Titel und Interpret von dem, was gerade läuft (Spotify, YouTube im Browser, VLC …), mit Zeitleiste zum Spulen, Zurück/Pause/Weiter sowie Shuffle und Wiederholen, wenn die App das unterstützt. Nutzt die Windows-Medienschnittstelle (Pakete in `requirements-media.txt`, optional).
 - **Spotify** (unter dem Mediaplayer): die nächsten 5 Lieder der Warteschlange (antippen = dorthin springen), Shuffle (aus/an, Smart Shuffle wird blau angezeigt) und Wiederholen (aus/Liste/Lied) über die Spotify Web API. Braucht eine eigene Spotify-App unter developer.spotify.com (Konto mit Premium), Redirect URI `http://127.0.0.1:8765/callback`. Die Anmeldung landet in `data/spotify_token.json` (nicht im Repo).
@@ -61,6 +62,7 @@ Alle Knöpfe stehen in `data/config.json`. Die Datei wird beim ersten Start mit 
 | `ui/hotkey_picker.py` | Tastenkombination auswählen oder aufnehmen |
 | `core/soundboard.py` | Soundboard: spielt Sounds auf virtuellem Kabel und eigenem Ausgang |
 | `core/portaudio.py` | Gemeinsame Verwaltung der Audio-Bibliothek für Mikrofon und Soundboard |
+| `ui/clock.py` | Uhr-Kachel |
 | `ui/colors.py` | Farbhilfen (mischen, lesbare Schrift) |
 | `ui/spotify_ui.py` | Warteschlange und Verbinden-Dialog |
 | `ui/system_monitor.py` | Dreiviertelkreis-Anzeigen des Systemmonitors |

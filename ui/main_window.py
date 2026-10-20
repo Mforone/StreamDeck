@@ -5,6 +5,7 @@ from ui.StreamDeckFunktion import *
 from core.config_manager import save_config
 from ui.audio_mixer import AudioMixerPanel
 from ui.system_monitor import SystemMonitorPanel
+from ui.clock import ClockPanel
 from ui.media_player import MediaPlayerPanel
 from core.window_focus import FocusKeeper
 from core.audio_apps import AudioAppWatcher
@@ -224,8 +225,12 @@ class ControlPanelApp(ctk.CTk):
             corner_radius=15
         )
         self.system_frame.grid(row=1, column=0, sticky="nsew")
+        # Uhr oben in der unteren Hälfte, also zwischen Mediaplayer und System. Ihre Höhe (3 cm) geben die drei
+        # Monitoring-Kacheln ab: sie teilen sich den Rest und werden dadurch je ca. 1 cm niedriger
+        clock = ClockPanel(self.system_frame)
+        clock.pack(fill="x", padx=15, pady=(10, 4))
         system_monitor = SystemMonitorPanel(self.system_frame)
-        system_monitor.pack(fill="both", expand=True, padx=15, pady=10)
+        system_monitor.pack(fill="both", expand=True, padx=15, pady=(4, 10))
 
         # ========================================================================================================
         # Texte
