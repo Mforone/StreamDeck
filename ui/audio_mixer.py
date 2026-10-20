@@ -1,3 +1,4 @@
+import time
 import customtkinter as ctk
 from config import COLORS
 from core.audio_manager import AudioManager
@@ -6,12 +7,20 @@ from ui.colors import contrast_text, mix
 
 
 def channel_colors(color):
-    """Alle Farben eines aktiven Kanals aus einer Grundfarbe (wie beim Standard-Blau: Fläche, heller beim Drüberfahren, dunkle Spur)."""
+    """Alle Farben eines aktiven Kanals aus einer Grundfarbe.
+
+    mix(farbe, dunkel, 0.8) heißt: 20 % Kanalfarbe, 80 % dunkler Hintergrund. So ist die ganze Karte
+    in der Farbe getönt, bleibt aber dunkel genug, dass weiße Schrift gut lesbar ist.
+    """
     return {
-        "main": color,
-        "hover": mix(color, "#FFFFFF", 0.3),
-        "track": mix(color, COLORS["card"], 0.75),   # 25 % Farbe, 75 % Kartenhintergrund
-        "text": contrast_text(color),
+        "main": color,                                   # Regler, Füllung, Stummschalter
+        "hover": mix(color, "#FFFFFF", 0.3),             # 30 % heller beim Drüberfahren
+        "card": mix(color, COLORS["card"], 0.82),        # Hintergrund der ganzen Karte
+        "track": mix(color, COLORS["bg"], 0.65),         # leere Spur des Reglers
+        "control": mix(color, COLORS["bg"], 0.82),       # Auswahlknopf, ▼/▲ (dunkler als die Karte)
+        "control_hover": mix(color, COLORS["card"], 0.45),
+        "border": mix(color, COLORS["card"], 0.45),
+        "text": contrast_text(color),                    # Schrift auf der vollen Farbe
     }
 
 
@@ -29,6 +38,7 @@ class AudioChannelStrip(ctk.CTkFrame):
         self.is_master = is_master
         self.selected_process = "master" if is_master else ""
         self.color = COLORS["accent"]
+        self.selected_at = 0.0  # wann die App gewählt wurde (für die Stille-Regel im Mixer)
         self.is_muted = False
         self.is_dragging = False
         self._active_popup = None
@@ -174,18 +184,20 @@ class AudioChannelStrip(ctk.CTkFrame):
         is_active = bool(self.selected_process and self.selected_process != "-- Auswählen --")
 
         if is_active:
-            # AKTIVER KANAL
-            self.configure(fg_color=COLORS["card"])
+            # AKTIVER KANAL: alles in der Kanalfarbe getönt
+            colors = channel_colors(self.color)
+            self.configure(fg_color=colors["card"])
+            self.lbl_channel.configure(text_color=COLORS["text"])
             self.btn_select.configure(
                 text_color=COLORS["text"],
-                fg_color=COLORS["bg"],
+                fg_color=colors["control"],
+                hover_color=colors["control_hover"],
                 border_width=1,
-                border_color=COLORS["border"]
+                border_color=colors["border"]
             )
             self.lbl_percent.configure(text_color=COLORS["text"])
-            self.btn_down.configure(text_color=COLORS["text"])
-            self.btn_up.configure(text_color=COLORS["text"])
-            colors = channel_colors(self.color)
+            for button in (self.btn_down, self.btn_up):
+                button.configure(text_color=COLORS["text"], fg_color=colors["control"], hover_color=colors["control_hover"])
             self.slider.configure(
                 button_color=colors["main"],
                 button_hover_color=colors["hover"],
@@ -200,15 +212,17 @@ class AudioChannelStrip(ctk.CTkFrame):
             # INAKTIVER KANAL (Sichtbar abgedunkelt mit dünnem Rahmen am Button)
             inactive_bg = "#16182B"
             self.configure(fg_color=inactive_bg)
+            self.lbl_channel.configure(text_color=COLORS["muted_text"])
             self.btn_select.configure(
                 text_color=COLORS["muted_text"],
                 fg_color="transparent",
+                hover_color=COLORS["card_hover"],
                 border_width=1,
                 border_color="#2A2D4A"
             )
             self.lbl_percent.configure(text_color=COLORS["muted_text"])
-            self.btn_down.configure(text_color=COLORS["muted_text"])
-            self.btn_up.configure(text_color=COLORS["muted_text"])
+            for button in (self.btn_down, self.btn_up):
+                button.configure(text_color=COLORS["muted_text"], fg_color=COLORS["bg"], hover_color=COLORS["card_hover"])
             self.slider.configure(
                 button_color="#2A2D4A",
                 button_hover_color=COLORS["accent_hover"],
@@ -299,6 +313,7 @@ class AudioChannelStrip(ctk.CTkFrame):
         if display_text is None:
             display_text = clean_name(proc_name) if proc_name else "-- Auswählen --"
         self.selected_process = proc_name
+        self.selected_at = time.monotonic()
         if not proc_name:
             self.is_muted = False
         if not proc_name:
@@ -347,12 +362,14 @@ class AudioChannelStrip(ctk.CTkFrame):
 
 
 class AudioMixerPanel(ctk.CTkFrame):
-    def __init__(self, master, watcher=None, channel_settings=None, **kwargs):
+    def __init__(self, master, watcher=None, channel_settings=None, idle_seconds=10, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.channels = []
-        # watcher: AudioAppWatcher (welche Apps laufen), channel_settings: {"2": {"app": "Discord.exe", "color": "#5865F2"}, ...}
+        # watcher: AudioAppWatcher (welche Apps Ton abgeben), channel_settings: {"2": {"app": "Discord.exe", "color": "#5865F2"}, ...}
         self.watcher = watcher
         self.channel_settings = channel_settings if channel_settings is not None else {}
+        # So viele Sekunden ohne Ton, dann gibt eine App ihren Kanal frei (kurze Pausen sollen nicht flackern)
+        self.idle_seconds = idle_seconds
         self._previous_running = None
         self.setup_ui()
         self.apply_channel_settings()
@@ -393,17 +410,19 @@ class AudioMixerPanel(ctk.CTkFrame):
             channel.set_color(self.channel_settings.get(str(channel.channel_num), {}).get("color"))
         self._previous_running = None  # beim nächsten Durchlauf alle laufenden Apps als "neu gestartet" behandeln
 
-    def auto_assign(self, running):
-        """Feste Apps belegen ihren Kanal, sobald sie starten; beendete Apps geben ihren Kanal frei.
+    def auto_assign(self, sounding, now=None):
+        """Feste Apps belegen ihren Kanal, sobald sie Ton abgeben; stille Apps geben ihren Kanal frei.
 
-        running: Prozessnamen (klein geschrieben) aller Apps mit Audiositzung.
+        sounding: Prozessnamen (klein geschrieben) aller Apps, die in den letzten idle_seconds Ton abgegeben haben.
         """
-        started = running if self._previous_running is None else running - self._previous_running
-        self._previous_running = set(running)
+        now = time.monotonic() if now is None else now
+        started = sounding if self._previous_running is None else sounding - self._previous_running
+        self._previous_running = set(sounding)
 
         for channel in self.channels[1:]:
             selected = channel.selected_process.lower()
-            if selected and selected not in running:
+            # Frisch gewählte Apps bekommen dieselbe Frist, sonst würde eine gerade pausierte App sofort wieder fliegen
+            if selected and selected not in sounding and now - channel.selected_at > self.idle_seconds:
                 channel.select_app("")
 
             fixed = self.channel_settings.get(str(channel.channel_num), {}).get("app", "")
@@ -412,7 +431,7 @@ class AudioMixerPanel(ctk.CTkFrame):
 
     def start_sync_loop(self):
         if self.watcher is not None and self.watcher.is_ready():
-            self.auto_assign(self.watcher.running())
+            self.auto_assign(self.watcher.sounding(self.idle_seconds))
         for channel in self.channels:
             channel.sync_from_system()
         self.after(200, self.start_sync_loop)

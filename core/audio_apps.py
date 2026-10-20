@@ -63,6 +63,7 @@ class AudioAppWatcher:
         self._lock = threading.Lock()
         self._known = load_known()
         self._running = set()       # Prozessnamen in Kleinbuchstaben
+        self._last_sound = {}       # Prozessname (klein) -> time.monotonic() des letzten hörbaren Tons
         self._ready = False         # erst nach der ersten Abfrage ist _running aussagekräftig
         self._last_save = time.time()
         self._dirty = False
@@ -79,6 +80,12 @@ class AudioAppWatcher:
     def running(self):
         with self._lock:
             return set(self._running)
+
+    def sounding(self, within_s):
+        """Laufende Apps, die in den letzten within_s Sekunden hörbar Ton abgegeben haben."""
+        now = time.monotonic()
+        with self._lock:
+            return {name for name, at in self._last_sound.items() if now - at <= within_s and name in self._running}
 
     def known_apps(self):
         """Alle Apps, die je Ton abgegeben haben, zuletzt gehörte zuerst: [(process_name, last_heard), ...]"""
@@ -100,6 +107,8 @@ class AudioAppWatcher:
                 with self._lock:
                     self._running = running
                     self._ready = True
+                    for process_name in heard:
+                        self._last_sound[process_name.lower()] = time.monotonic()
                     is_new = merge_heard(self._known, heard, now)
                     if heard:
                         self._dirty = True

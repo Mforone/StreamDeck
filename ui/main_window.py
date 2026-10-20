@@ -178,7 +178,8 @@ class ControlPanelApp(ctk.CTk):
         # Merkt sich im Hintergrund, welche Apps laufen und welche je Ton abgegeben haben
         self.audio_watcher = AudioAppWatcher()
         channel_settings = self.config_data.setdefault("settings", {}).setdefault("mixer_channels", {})
-        self.audio_mixer = AudioMixerPanel(self.mixer_frame, watcher=self.audio_watcher, channel_settings=channel_settings)
+        self.audio_mixer = AudioMixerPanel(self.mixer_frame, watcher=self.audio_watcher, channel_settings=channel_settings,
+                                           idle_seconds=self.config_data["settings"].get("mixer_idle_seconds", 10))
         self.audio_mixer.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Sidebar Rechts
