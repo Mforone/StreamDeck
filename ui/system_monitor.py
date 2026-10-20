@@ -1,4 +1,6 @@
+import math
 import tkinter as tk
+import tkinter.font as tkfont
 import customtkinter as ctk
 from config import COLORS
 from core.system_monitor import SystemMonitor
@@ -32,7 +34,9 @@ class GaugeRow(tk.Canvas):
     """Eine Zeile: Dreiviertelkreis mit Prozentwert links, Name und Zusatzinfo rechts daneben."""
 
     def __init__(self, master, name):
-        super().__init__(master, bg=COLORS["sidebar"], highlightthickness=0, bd=0)
+        # width/height=1: Die Zeichenfläche verlangt selbst keinen Platz (Standard wären ~380x270 px),
+        # ihre Größe bestimmt allein das Layout
+        super().__init__(master, width=1, height=1, bg=COLORS["sidebar"], highlightthickness=0, bd=0)
         self.name = name
         self.percent = None
         self.detail = ""
@@ -52,8 +56,8 @@ class GaugeRow(tk.Canvas):
 
         # Kreisgröße richtet sich nach dem verfügbaren Platz, damit es auf jedem Bildschirm passt
         pad = 4
-        size = min(h - 2 * pad, w * 0.5)
-        line = max(4, size * 0.11)
+        size = min(h - 2 * pad, w * 0.34)
+        line = max(3, size * 0.1)
 
         # Rahmen um den halben Strich nach innen, sonst wird der dicke Bogen am Rand abgeschnitten
         left = pad + line / 2
@@ -63,32 +67,55 @@ class GaugeRow(tk.Canvas):
         center_x = pad + size / 2
         center_y = h / 2
 
+        radius = (size - line) / 2
+
         # Hintergrundbogen (leer)
-        self.create_arc(left, top, right, bottom, start=ARC_START, extent=-ARC_SPAN,
-                        style="arc", outline=COLORS["border"], width=line)
+        self._rounded_arc(center_x, center_y, radius, line, -ARC_SPAN, COLORS["border"])
 
         # Gefüllter Teil: negativer Winkel = im Uhrzeigersinn
         if self.percent is not None and self.percent >= 0.5:
             extent = -ARC_SPAN * min(self.percent, 100) / 100
-            self.create_arc(left, top, right, bottom, start=ARC_START, extent=extent,
-                            style="arc", outline=usage_color(self.percent), width=line)
+            self._rounded_arc(center_x, center_y, radius, line, extent, usage_color(self.percent))
 
         text = f"{self.percent:.0f}%" if self.percent is not None else "k. A."
-        # Negative Schriftgröße = Pixel, so wächst die Schrift mit dem Kreis mit
+        # Schrift wächst mit dem Kreis mit, passt aber immer in sein Inneres
         self.create_text(center_x, center_y, text=text, fill=COLORS["text"],
-                         font=("Helvetica", -int(size * 0.24), "bold"))
+                         font=self._fitting_font(text, size * 0.22, (radius - line / 2) * 1.6, bold=True))
 
-        # Name und Zusatzinfo rechts neben dem Kreis
-        text_x = pad + size + size * 0.18
-        name_font = ("Helvetica", -int(size * 0.22), "bold")
+        # Name und Zusatzinfo rechts neben dem Kreis, Schrift wird verkleinert, bis der Text in die Zeile passt
+        text_x = pad + size + size * 0.15
+        room = w - text_x - pad
+        name_font = self._fitting_font(self.name, size * 0.2, room, bold=True)
         if self.detail:
             self.create_text(text_x, center_y - size * 0.02, text=self.name, anchor="sw",
                              fill=COLORS["text"], font=name_font)
             self.create_text(text_x, center_y + size * 0.04, text=self.detail, anchor="nw",
-                             fill=COLORS["muted_text"], font=("Helvetica", -int(size * 0.15)))
+                             fill=COLORS["muted_text"], font=self._fitting_font(self.detail, size * 0.14, room))
         else:
             self.create_text(text_x, center_y, text=self.name, anchor="w",
                              fill=COLORS["text"], font=name_font)
+
+    def _rounded_arc(self, center_x, center_y, radius, line, extent, color):
+        """Bogen mit runden Enden: Tk kann das nicht selbst, deshalb sitzt an jedem Ende ein Punkt in Strichdicke."""
+        self.create_arc(center_x - radius, center_y - radius, center_x + radius, center_y + radius,
+                        start=ARC_START, extent=extent, style="arc", outline=color, width=line)
+        for angle in (ARC_START, ARC_START + extent):
+            # Winkel in Bogenmaß; Tk zählt gegen den Uhrzeigersinn ab 3 Uhr, y wächst nach unten
+            x = center_x + radius * math.cos(math.radians(angle))
+            y = center_y - radius * math.sin(math.radians(angle))
+            self.create_oval(x - line / 2, y - line / 2, x + line / 2, y + line / 2, fill=color, outline="")
+
+    @staticmethod
+    def _fitting_font(text, pixels, max_width, bold=False):
+        """Größte Schrift bis `pixels`, bei der `text` noch in `max_width` passt."""
+        pixels = max(6, int(pixels))
+        weight = "bold" if bold else "normal"
+        while pixels > 6:
+            # Negative Größe = Pixel statt Punkte
+            if tkfont.Font(family="Helvetica", size=-pixels, weight=weight).measure(text) <= max_width:
+                break
+            pixels -= 1
+        return ("Helvetica", -pixels, weight)
 
 
 class SystemMonitorPanel(ctk.CTkFrame):

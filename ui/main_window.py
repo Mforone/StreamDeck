@@ -176,8 +176,9 @@ class ControlPanelApp(ctk.CTk):
         self.sidebar_r.grid_propagate(0)
 
         # Einteilung der rechten Seite
-        self.sidebar_r.grid_rowconfigure(0, weight=2)
-        self.sidebar_r.grid_rowconfigure(1, weight=1)
+        # Mediaplayer oben, Systemmonitor unten, jeweils genau die Hälfte (uniform = gleich groß, egal wie viel der Inhalt will)
+        self.sidebar_r.grid_rowconfigure(0, weight=1, uniform="sidebar_r")
+        self.sidebar_r.grid_rowconfigure(1, weight=1, uniform="sidebar_r")
         self.sidebar_r.grid_columnconfigure(0, weight=1)
 
         # Mediapalyer
