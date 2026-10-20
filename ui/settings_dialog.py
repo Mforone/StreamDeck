@@ -218,6 +218,27 @@ class SettingsDialog(ctk.CTkToplevel):
             return
         mic_settings = self.mic.settings
 
+        # Mikrofon-Auswahl: "Windows-Standard" folgt dem Standardgerät aus den Windows-Soundeinstellungen
+        device_row = ctk.CTkFrame(tab, fg_color="transparent")
+        device_row.pack(fill="x", padx=8, pady=(10, 0))
+        device_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(device_row, text="Mikrofon", font=("Helvetica", 13, "bold"),
+                     text_color=COLORS["text"]).grid(row=0, column=0, padx=(0, 10))
+        self.device_menu = ctk.CTkOptionMenu(
+            device_row, values=["…"], height=34, font=("Helvetica", 12, "bold"), dropdown_font=("Helvetica", 12),
+            fg_color=COLORS["bg"], button_color=COLORS["bg"], button_hover_color=COLORS["card_hover"],
+            dropdown_fg_color=COLORS["card"], dropdown_hover_color=COLORS["card_hover"], text_color=COLORS["text"],
+            dynamic_resizing=False, command=self._choose_mic)
+        self.device_menu.grid(row=0, column=1, sticky="ew")
+        ctk.CTkButton(device_row, text="⟳", width=34, height=34, font=("Helvetica", 16, "bold"), fg_color=COLORS["bg"],
+                      hover_color=COLORS["card_hover"], text_color=COLORS["text"],
+                      command=self.mic.refresh_devices).grid(row=0, column=2, padx=(6, 0))
+        self.lbl_mic_device = ctk.CTkLabel(tab, text="", font=("Helvetica", 11, "bold"), text_color=COLORS["muted_text"],
+                                           anchor="w", wraplength=480, justify="left")
+        self.lbl_mic_device.pack(fill="x", padx=8, pady=(2, 0))
+        self._mic_devices_shown = None
+        self._mic_label_to_name = {}
+
         self.beep_switch = ctk.CTkSwitch(tab, text="Piepen, wenn ich zu laut bin", font=("Helvetica", 13, "bold"),
                                          text_color=COLORS["text"], progress_color=COLORS["good"],
                                          switch_width=46, switch_height=24, command=self._toggle_beep)
@@ -264,6 +285,33 @@ class SettingsDialog(ctk.CTkToplevel):
         self._threshold_moved(mic_settings["threshold_db"])
         self._update_mic_meter()
 
+    def _default_label(self, default_name):
+        return f"Windows-Standard ({default_name})" if default_name else "Windows-Standard"
+
+    def _refresh_mic_devices(self):
+        """Auswahlliste aktualisieren, sobald die Überwachung die Geräte (neu) eingelesen hat."""
+        devices, default_name, current = self.mic.devices()
+        shown = (tuple(devices), default_name, current, self.mic.settings.get("device", ""))
+        if shown == self._mic_devices_shown:
+            return
+        self._mic_devices_shown = shown
+
+        default_label = self._default_label(default_name)
+        self._mic_label_to_name = {default_label: ""}
+        self._mic_label_to_name.update({name: name for name in devices})
+        self.device_menu.configure(values=list(self._mic_label_to_name))
+        wanted = self.mic.settings.get("device", "")
+        self.device_menu.set(wanted if wanted else default_label)
+        self.lbl_mic_device.configure(
+            text=f"Erkannt: {len(devices)} Mikrofon{'e' if len(devices) != 1 else ''}"
+                 + (f" · überwacht wird: {current}" if current else ""))
+
+    def _choose_mic(self, label):
+        self.mic.set_device(self._mic_label_to_name.get(label, ""))
+        self._mic_devices_shown = None
+        if self.on_mic_change:
+            self.on_mic_change()
+
     def _toggle_beep(self):
         self.mic.set_beep_enabled(bool(self.beep_switch.get()))
         if self.on_mic_change:
@@ -280,6 +328,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self.mic_meter.set_level(level, *mic_zones(self.mic.settings["threshold_db"]))
         self.lbl_mic_level.configure(text=f"jetzt {format_db(self.mic_meter.shown_db)}")
         self.lbl_mic_status.configure(text=MIC_STATUS_TEXT.get(self.mic.status(), ""))
+        self._refresh_mic_devices()
         self.after(MIC_METER_MS, self._update_mic_meter)
 
     # ------------------------------------------------------------------------------------------------

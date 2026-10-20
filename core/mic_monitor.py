@@ -20,6 +20,8 @@ MIN_BEEP_GAP_S = 2.0       # und frühestens 2 s nach dem letzten Piep
 WARN_RANGE_DB = 6.0        # gelb: die letzten 6 dB (10 % der Skala) vor dem Schwellwert
 SILENT_HINT_AFTER_S = 5.0  # so lange exakt 0 = vermutlich stumm oder von Windows blockiert
 RESTART_CHECK_S = 2.0
+FIRST_SIGNAL_DB = -50.0    # ab hier gilt es als "da kommt etwas an" (fürs Log)
+DEFAULT_DEVICE = ""        # in den Einstellungen: "" = Windows-Standard
 
 BEEP_HZ = 1046.5           # hohes C
 BEEP_S = 0.14
@@ -73,6 +75,21 @@ class BeepTrigger:
         return False
 
 
+def pick_device(devices, wanted, default_index):
+    """Gerät für die Aufnahme wählen: das gewünschte (per Name), sonst das Windows-Standardgerät, sonst das erste.
+
+    devices: [(index, name), ...]
+    """
+    if wanted:
+        for index, name in devices:
+            if name == wanted:
+                return index, name
+    for index, name in devices:
+        if index == default_index:
+            return index, name
+    return devices[0] if devices else (None, None)
+
+
 def make_beep_wav(frequency=BEEP_HZ, seconds=BEEP_S, volume=BEEP_VOLUME, rate=SAMPLE_RATE_BEEP):
     """Erzeugt einen kurzen Piepton als WAV-Datei im Speicher (keine Datei, kein Programm nötig)."""
     count = int(rate * seconds)
@@ -101,6 +118,7 @@ class MicMonitor:
         self.settings = settings
         self.settings.setdefault("threshold_db", -12.0)
         self.settings.setdefault("beep", True)
+        self.settings.setdefault("device", DEFAULT_DEVICE)
         self.audio = audio
         self.trigger = BeepTrigger(self.settings["threshold_db"])
         self._beep = make_beep_wav()
@@ -111,6 +129,10 @@ class MicMonitor:
         self._status = "startet"
         self._stream = None
         self._restart = threading.Event()
+        self._devices = []          # Namen aller erkannten Mikrofone (für die Einstellungen)
+        self._default_name = ""     # Name des aktuellen Windows-Standard-Mikrofons
+        self._device_name = ""      # Name des gerade überwachten Mikrofons
+        self._signal_reported = False
 
         threading.Thread(target=self._run, name="Mikrofon", daemon=True).start()
 
@@ -124,6 +146,19 @@ class MicMonitor:
         if self._status == "ok" and time.monotonic() - self._last_signal > SILENT_HINT_AFTER_S:
             return "stumm"
         return self._status
+
+    def devices(self):
+        """(alle erkannten Mikrofone, Windows-Standard, gerade überwacht)"""
+        return list(self._devices), self._default_name, self._device_name
+
+    def set_device(self, name):
+        """Mikrofon wählen ("" = Windows-Standard) und die Aufnahme damit neu öffnen."""
+        self.settings["device"] = name
+        self._restart.set()
+
+    def refresh_devices(self):
+        """Geräteliste neu einlesen (z. B. Headset gerade angesteckt)."""
+        self._restart.set()
 
     def set_threshold(self, threshold_db):
         self.settings["threshold_db"] = float(threshold_db)
@@ -155,6 +190,9 @@ class MicMonitor:
         energy = float(np.mean(np.square(block, dtype=np.float64)))
         if energy > 0:
             self._last_signal = time.monotonic()
+        if not self._signal_reported and energy > 0 and to_db(math.sqrt(energy)) > FIRST_SIGNAL_DB:
+            self._signal_reported = True
+            print(f"Mikrofon: Signal kommt an ({to_db(math.sqrt(energy)):.0f} dB)")
 
         self._energies.append(energy)
         if len(self._energies) > WINDOW_BLOCKS:
@@ -167,15 +205,53 @@ class MicMonitor:
 
     def _open_stream(self):
         import sounddevice as sd
-        # Geräteliste neu einlesen, damit ein in Windows gewechseltes Standard-Mikrofon greift
+        # Geräteliste neu einlesen, damit ein angestecktes Headset oder ein in Windows gewechseltes
+        # Standard-Mikrofon erkannt wird
         sd._terminate()
         sd._initialize()
-        device = sd.query_devices(kind="input")
-        rate = int(device["default_samplerate"])
-        stream = sd.InputStream(channels=1, samplerate=rate, blocksize=int(rate * BLOCK_S),
-                                dtype="float32", callback=self._callback)
-        stream.start()
-        print(f"Mikrofon: überwache \"{device['name']}\" mit {rate} Hz")
+
+        # WASAPI ist Windows' moderner Audioweg: volle Gerätenamen wie in den Windows-Soundeinstellungen,
+        # das Standardgerät ist das aktuelle aus Windows. Der alte Weg (MME) kürzt Namen auf 31 Zeichen.
+        hostapis = sd.query_hostapis()
+        wasapi = next((i for i, api in enumerate(hostapis) if "WASAPI" in api["name"]), None)
+        api = wasapi if wasapi is not None else sd.default.hostapi
+        devices = [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+                   if d["hostapi"] == api and d["max_input_channels"] > 0]
+        default_index = hostapis[api]["default_input_device"]
+
+        self._devices = [name for _, name in devices]
+        self._default_name = next((name for i, name in devices if i == default_index), "")
+        wanted = self.settings.get("device", DEFAULT_DEVICE)
+        index, name = pick_device(devices, wanted, default_index)
+        if index is None:
+            raise RuntimeError("kein Mikrofon gefunden")
+        if wanted and name != wanted:
+            print(f"Mikrofon: \"{wanted}\" nicht gefunden, nehme \"{name}\"")
+
+        info = sd.query_devices(index)
+        rate = int(info["default_samplerate"])
+        # auto_convert: Windows rechnet auf 1 Kanal und unsere Abtastrate um, egal was das Mikrofon liefert
+        extra = sd.WasapiSettings(auto_convert=True) if wasapi is not None else None
+        try:
+            stream = sd.InputStream(device=index, channels=1, samplerate=rate, blocksize=int(rate * BLOCK_S),
+                                    dtype="float32", callback=self._callback, extra_settings=extra)
+            stream.start()
+        except Exception as e:
+            if wasapi is None:
+                raise
+            # Rückfall auf den alten Weg (MME), z. B. wenn ein Programm das Gerät exklusiv belegt
+            print(f"Mikrofon: WASAPI ging nicht ({e}), versuche den alten Weg")
+            info = sd.query_devices(kind="input")
+            rate = int(info["default_samplerate"])
+            stream = sd.InputStream(channels=1, samplerate=rate, blocksize=int(rate * BLOCK_S),
+                                    dtype="float32", callback=self._callback)
+            stream.start()
+            name, api = info["name"], info["hostapi"]
+        self._device_name = name
+        self._signal_reported = False
+        print(f"Mikrofon: erkannt: {', '.join(self._devices)}")
+        print(f"Mikrofon: überwache \"{name}\" mit {rate} Hz über {hostapis[api]['name']}"
+              f"{' (Windows-Standard)' if not wanted else ''}")
         return stream
 
     def _run(self):
@@ -195,6 +271,7 @@ class MicMonitor:
                 self._restart.clear()
                 self._close()
                 try:
+                    self._silence_logged = False
                     self._stream = self._open_stream()
                     self._status = "ok"
                     self._last_signal = time.monotonic()
@@ -207,7 +284,13 @@ class MicMonitor:
             elif self._stream is not None and not self._stream.active:
                 print("Mikrofon: Aufnahme abgebrochen, starte neu")
                 self._restart.set()
-            time.sleep(RESTART_CHECK_S)
+            elif self._stream is not None and not self._signal_reported and \
+                    time.monotonic() - self._last_signal > SILENT_HINT_AFTER_S and not getattr(self, "_silence_logged", False):
+                print(f"Mikrofon: von \"{self._device_name}\" kommt seit {SILENT_HINT_AFTER_S:.0f} s nichts an "
+                      f"(stumm, falsches Gerät oder von Windows blockiert)")
+                self._silence_logged = True
+            # Warten, aber sofort weiter, wenn in den Einstellungen ein anderes Mikrofon gewählt wurde
+            self._restart.wait(RESTART_CHECK_S)
 
     def _close(self):
         if self._stream is not None:

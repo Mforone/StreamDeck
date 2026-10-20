@@ -113,8 +113,9 @@ class AudioAppWatcher:
 
     def known_apps(self):
         """Alle Apps, die je Ton abgegeben haben, zuletzt gehörte zuerst: [(process_name, last_heard), ...]"""
+        own = psutil.Process().name().lower()  # früher gemerkter eigener Prozess (Test-Piep) ausblenden
         with self._lock:
-            entries = [(v["process"], v["last_heard"]) for v in self._known.values()]
+            entries = [(v["process"], v["last_heard"]) for v in self._known.values() if v["process"].lower() != own]
         return sorted(entries, key=lambda e: e[1], reverse=True)
 
     def level(self, process_name):
@@ -224,9 +225,10 @@ class AudioAppWatcher:
         from pycaw.pycaw import AudioUtilities, IAudioMeterInformation, ISimpleAudioVolume
 
         running, heard, levels, sessions, controls, meters = set(), set(), {}, [], {}, {}
+        own_pid = os.getpid()
         for session in AudioUtilities.GetAllSessions():
             pid = session.ProcessId
-            if not pid:
+            if not pid or pid == own_pid:  # eigener Prozess: der Test-Piep ist keine App
                 continue
             try:
                 # Selbst nachschlagen statt session.Process: das wirft, wenn der Prozess gerade beendet wurde
