@@ -6,6 +6,7 @@ from PIL import Image
 from core.config_manager import save_config, load_config
 from ui.edit_dialog import EditButtonDialog
 from config import COLORS
+from ui.window_utils import center_over
 
 
 def execute_button_action(app_data):
@@ -143,17 +144,8 @@ class AppButtonRow(ctk.CTkFrame):
             confirm_dialog.configure(fg_color=COLORS["card"])
             confirm_dialog.attributes("-topmost", True)
 
-            # Positionieren (Zentriert über dem Hauptfenster oder der Maus)
-            confirm_dialog.geometry("320x150")
-
-            # Zentrieren relativ zum Hauptfenster
-            root_x = root.winfo_x()
-            root_y = root.winfo_y()
-            root_w = root.winfo_width()
-            root_h = root.winfo_height()
-            x = root_x + (root_w // 2) - 160
-            y = root_y + (root_h // 2) - 75
-            confirm_dialog.geometry(f"320x150+{x}+{y}")
+            # Zentriert über dem Hauptfenster, also auf dem Bildschirm des Control Panels
+            center_over(confirm_dialog, root, 320, 150)
 
             border_frame = ctk.CTkFrame(
                 confirm_dialog,

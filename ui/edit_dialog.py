@@ -3,6 +3,7 @@ import customtkinter as ctk
 from tkinter import colorchooser, filedialog
 from PIL import Image
 from config import COLORS
+from ui.window_utils import center_over
 
 
 def get_contrast_text_color(hex_color: str) -> str:
@@ -37,7 +38,8 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.overrideredirect(True)
         self.attributes("-topmost", True)
 
-        self.geometry("420x620")
+        # Auf dem Bildschirm des Control Panels öffnen, nicht auf dem Hauptbildschirm
+        center_over(self, parent, 420, 620)
         self.configure(fg_color=COLORS["card"])
 
         # Daten initialisieren
