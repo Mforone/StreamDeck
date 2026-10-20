@@ -33,10 +33,10 @@ def format_gb(value):
 class GaugeRow(tk.Canvas):
     """Eine Zeile: Dreiviertelkreis mit Prozentwert links, Name und Zusatzinfo rechts daneben."""
 
-    def __init__(self, master, name):
+    def __init__(self, master, name, bg):
         # width/height=1: Die Zeichenfläche verlangt selbst keinen Platz (Standard wären ~380x270 px),
         # ihre Größe bestimmt allein das Layout
-        super().__init__(master, width=1, height=1, bg=COLORS["sidebar"], highlightthickness=0, bd=0)
+        super().__init__(master, width=1, height=1, bg=bg, highlightthickness=0, bd=0)
         self.name = name
         self.percent = None
         self.detail = ""
@@ -138,8 +138,14 @@ class SystemMonitorPanel(ctk.CTkFrame):
         self.gauges = {}
         for index, (key, name) in enumerate([("cpu", "CPU"), ("gpu", "GPU"), ("ram", "RAM")]):
             rows.grid_rowconfigure(index, weight=1, uniform="gauges")
-            gauge = GaugeRow(rows, name)
-            gauge.grid(row=index, column=0, sticky="nsew", pady=2)
+
+            # Eigene Box je Anzeige: etwas hellere Fläche mit runden Ecken, ohne Rahmen
+            box = ctk.CTkFrame(rows, fg_color=COLORS["card"], corner_radius=12)
+            box.grid(row=index, column=0, sticky="nsew", pady=4)
+
+            # Innenabstand so groß wie die Eckenrundung, damit die Zeichenfläche die runden Ecken nicht überdeckt
+            gauge = GaugeRow(box, name, bg=COLORS["card"])
+            gauge.pack(fill="both", expand=True, padx=10, pady=6)
             self.gauges[key] = gauge
 
         # monitor=None nur zum Testen ohne echte Messung
