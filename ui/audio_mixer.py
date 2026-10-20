@@ -1,7 +1,6 @@
 import time
 import customtkinter as ctk
 from config import COLORS
-from core.audio_manager import AudioManager
 from core.audio_apps import clean_name
 from ui.colors import contrast_text, mix
 
@@ -25,7 +24,7 @@ def channel_colors(color):
 
 
 class AudioChannelStrip(ctk.CTkFrame):
-    def __init__(self, master, channel_num: int, is_master: bool = False, **kwargs):
+    def __init__(self, master, channel_num: int, is_master: bool = False, audio=None, **kwargs):
         super().__init__(
             master,
             fg_color=COLORS["card"],
@@ -34,6 +33,9 @@ class AudioChannelStrip(ctk.CTkFrame):
             **kwargs
         )
 
+        # audio: der Audio-Dienst (core/audio_apps.py). Alle Windows-Audio-Aufrufe laufen dort im Hintergrund,
+        # dieser Kanal liest nur fertige Werte und legt Befehle ab: so kann die Oberfläche nie hängen bleiben
+        self.audio = audio
         self.channel_num = channel_num
         self.is_master = is_master
         self.selected_process = "master" if is_master else ""
@@ -43,7 +45,8 @@ class AudioChannelStrip(ctk.CTkFrame):
         self.is_dragging = False
         self._active_popup = None
 
-        initial_vol = AudioManager.get_volume(self.selected_process) if self.selected_process else 0.5
+        level = self.audio.level(self.selected_process) if self.audio and self.selected_process else None
+        initial_vol = level[0] if level else 0.5
         self.initial_percent_str = f"{int(initial_vol * 100)}%"
 
         self.setup_ui(initial_vol)
@@ -165,8 +168,8 @@ class AudioChannelStrip(ctk.CTkFrame):
 
     def on_drag_release(self, event):
         self.is_dragging = False
-        if self.selected_process:
-            AudioManager.set_volume(self.selected_process, self.slider.get())
+        if self.selected_process and self.audio:
+            self.audio.set_volume(self.selected_process, self.slider.get())
 
     def update_channel_appearance(self):
         if self.is_master:
@@ -238,7 +241,7 @@ class AudioChannelStrip(ctk.CTkFrame):
             self._active_popup = None
             return
 
-        sessions = AudioManager.get_active_sessions()
+        sessions = self.audio.sessions() if self.audio else []
 
         popup = ctk.CTkToplevel(self)
         self._active_popup = popup
@@ -331,8 +334,8 @@ class AudioChannelStrip(ctk.CTkFrame):
     def on_volume_change(self, value):
         percent = int(value * 100)
         self.lbl_percent.configure(text=f"{percent}%")
-        if self.selected_process:
-            AudioManager.set_volume(self.selected_process, value)
+        if self.selected_process and self.audio:
+            self.audio.set_volume(self.selected_process, value)
 
     def adjust_volume(self, delta):
         new_val = max(0.0, min(1.0, self.slider.get() + delta))
@@ -341,16 +344,18 @@ class AudioChannelStrip(ctk.CTkFrame):
 
     def toggle_mute(self):
         self.is_muted = not self.is_muted
-        if self.selected_process:
-            AudioManager.set_mute(self.selected_process, self.is_muted)
+        if self.selected_process and self.audio:
+            self.audio.set_mute(self.selected_process, self.is_muted)
         self.update_channel_appearance()
 
     def sync_from_system(self):
-        if not self.selected_process or self.is_dragging:
+        if not self.selected_process or self.is_dragging or not self.audio:
             return
 
-        sys_vol = AudioManager.get_volume(self.selected_process)
-        sys_mute = AudioManager.get_mute(self.selected_process)
+        level = self.audio.level(self.selected_process)
+        if level is None:
+            return  # noch keine Werte vom Audio-Dienst
+        sys_vol, sys_mute = level
 
         if abs(self.slider.get() - sys_vol) > 0.01:
             self.slider.set(sys_vol)
@@ -399,7 +404,8 @@ class AudioMixerPanel(ctk.CTkFrame):
             strip = AudioChannelStrip(
                 channels_frame,
                 channel_num=i + 1,
-                is_master=is_master
+                is_master=is_master,
+                audio=self.watcher
             )
             strip.grid(row=0, column=i, padx=2, pady=0, sticky="nsew")
             self.channels.append(strip)

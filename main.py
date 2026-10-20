@@ -3,7 +3,7 @@ import sys
 # Unter pythonw.exe (Start ohne Konsole) gibt es kein Konsolenfenster für Ausgaben.
 # Dann landen alle Meldungen und Fehler mit Uhrzeit in data/streamdeck.log,
 # das Log vom vorherigen Start bleibt als data/streamdeck_vorher.log erhalten.
-from core.diagnostics import install_exception_hooks, setup_logging, start_health_log
+from core.diagnostics import install_exception_hooks, setup_logging, start_hang_watchdog, start_health_log
 
 setup_logging()
 install_exception_hooks()
@@ -29,5 +29,6 @@ if __name__ == "__main__":
     app = ControlPanelApp(config_data=config)
     app.report_callback_exception = report_tk_error
     start_health_log()
+    start_hang_watchdog(app, audio=app.audio_watcher)
     app.mainloop()
     print("Programm regulär beendet")

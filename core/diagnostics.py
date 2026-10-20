@@ -12,10 +12,15 @@ from datetime import datetime
 # - faulthandler: schreibt bei harten Abstürzen (z. B. in Windows-Bibliotheken) die Stelle aller Threads ins Log
 # - unbehandelte Fehler aus Hintergrund-Threads landen mit Uhrzeit im Log
 # - alle 5 Minuten eine Zustandszeile (Speicher, Threads, Windows-Handles), damit man ein Volllaufen sieht
+# - Hänger-Wächter: reagiert die Oberfläche oder der Audio-Thread länger nicht, steht im Log, wo jeder Thread steckt
 
 LOG_FILE = os.path.join("data", "streamdeck.log")
 PREVIOUS_LOG_FILE = os.path.join("data", "streamdeck_vorher.log")
 HEALTH_INTERVAL_S = 300
+HANG_AFTER_S = 10
+WATCHDOG_CHECK_S = 2
+
+_log_file = None  # rohe Logdatei für faulthandler (None = Konsole)
 
 
 class TimestampedLog:
@@ -60,7 +65,9 @@ def setup_logging():
     except OSError:
         pass
 
+    global _log_file
     log_file = open(LOG_FILE, "w", encoding="utf-8", buffering=1)
+    _log_file = log_file
     sys.stdout = sys.stderr = TimestampedLog(log_file)
     # Harte Abstürze: faulthandler schreibt direkt in die Datei (ohne Uhrzeit, die steht in der Zeile davor)
     faulthandler.enable(file=log_file, all_threads=True)
@@ -112,3 +119,44 @@ def start_health_log():
             time.sleep(HEALTH_INTERVAL_S)
 
     threading.Thread(target=run, name="Zustand", daemon=True).start()
+
+
+def _dump_all_threads(reason):
+    print(f"HÄNGER: {reason}. Wo die Threads gerade stecken:")
+    sys.stdout.flush()
+    target = _log_file if _log_file is not None else sys.stderr
+    faulthandler.dump_traceback(file=target, all_threads=True)
+    target.flush()
+
+
+def start_hang_watchdog(root, audio=None):
+    """Oberfläche meldet sich jede Sekunde; ein eigener Thread prüft, ob die Meldungen ausbleiben.
+
+    Hängt der Haupt-Thread, kann er selbst nichts mehr schreiben. Der Wächter-Thread schon:
+    er schreibt dann für jeden Thread die Zeile, in der er gerade festsitzt.
+    """
+    state = {"ui": time.monotonic()}
+
+    def heartbeat():
+        state["ui"] = time.monotonic()
+        root.after(1000, heartbeat)
+
+    def watch():
+        reported = {"ui": False, "audio": False}
+        while True:
+            time.sleep(WATCHDOG_CHECK_S)
+            now = time.monotonic()
+            checks = {"ui": ("Die Oberfläche", state["ui"])}
+            if audio is not None and audio.is_ready():
+                checks["audio"] = ("Der Audio-Thread", audio.last_tick())
+            for key, (name, last) in checks.items():
+                stuck = now - last
+                if stuck > HANG_AFTER_S and not reported[key]:
+                    _dump_all_threads(f"{name} reagiert seit {stuck:.0f} s nicht")
+                    reported[key] = True
+                elif stuck <= HANG_AFTER_S and reported[key]:
+                    print(f"{name} reagiert wieder")
+                    reported[key] = False
+
+    heartbeat()
+    threading.Thread(target=watch, name="Waechter", daemon=True).start()

@@ -7,16 +7,21 @@ import psutil
 
 from core.audio_manager import APP_BLACKLIST
 
-# Beobachtet im Hintergrund die Windows-Audiositzungen:
-# - welche Apps gerade eine Audiositzung haben ("laufen", für das automatische Belegen der Mixer-Kanäle)
-# - welche Apps jemals hörbar Ton abgegeben haben (dauerhaft in data/audio_apps.json, für die Auswahl in den Einstellungen)
+# Der Audio-Dienst: EIN Hintergrund-Thread übernimmt alle Gespräche mit Windows-Audio.
+# - liest pro Durchgang einmal alle Audiositzungen: laufende Apps, Lautstärke, Stumm, Pegel
+# - setzt Lautstärke/Stumm, wenn die Oberfläche es verlangt (Befehle werden gesammelt und hier ausgeführt)
+# - merkt sich, welche Apps je hörbar Ton abgegeben haben (data/audio_apps.json)
+# Die Oberfläche liest nur fertige Werte und ruft selbst NIE Windows-Audio auf: hängt eine Abfrage
+# (z. B. weil ein Spiel gerade seine Audiositzung umbaut), friert so höchstens der Mixer kurz ein, nie die ganze App.
 
-WATCH_INTERVAL_S = 1.0
+WATCH_INTERVAL_S = 0.25
 APPS_FILE = os.path.join("data", "audio_apps.json")
 SAVE_EVERY_S = 60          # "zuletzt gehört" höchstens einmal pro Minute auf die Platte schreiben
 AUDIBLE_PEAK = 0.01        # ab 1 % Pegel zählt es als "Ton abgegeben" (wie im Mixer-Dropdown)
 
+SESSION_STATE_ACTIVE = 1   # AudioSessionStateActive: spielt gerade (Stream offen)
 SESSION_STATE_EXPIRED = 2  # AudioSessionStateExpired: Sitzung beendet
+MASTER = "master"
 
 
 def clean_name(process_name):
@@ -61,21 +66,30 @@ def save_known(known):
 class AudioAppWatcher:
     def __init__(self, start_thread=True):
         self._lock = threading.Lock()
+        self._wake = threading.Event()
         self._known = load_known()
         self._running = set()       # Prozessnamen in Kleinbuchstaben
         self._last_sound = {}       # Prozessname (klein) -> time.monotonic() des letzten hörbaren Tons
-        self._ready = False         # erst nach der ersten Abfrage ist _running aussagekräftig
+        self._levels = {}           # Prozessname (klein) oder "master" -> (Lautstärke 0..1, stumm)
+        self._sessions = []         # aktive Sitzungen für das Mixer-Dropdown
+        self._pending = {}          # (Prozessname klein, "volume"/"mute") -> Wert, wartet auf Ausführung
+        self._ready = False         # erst nach der ersten Abfrage sind die Werte aussagekräftig
+        self._last_tick = time.monotonic()
         self._last_save = time.time()
         self._dirty = False
         self._reported = set()
 
         if start_thread:
-            threading.Thread(target=self._run, daemon=True).start()
+            threading.Thread(target=self._run, name="Audio", daemon=True).start()
 
-    # ---- für die Oberfläche ----
+    # ---- für die Oberfläche (nur Lesen und Befehle ablegen, nie Windows aufrufen) ----
 
     def is_ready(self):
         return self._ready
+
+    def last_tick(self):
+        """Wann der Audio-Thread zuletzt einen Durchgang beendet hat (für die Hänger-Erkennung)."""
+        return self._last_tick
 
     def running(self):
         with self._lock:
@@ -93,7 +107,32 @@ class AudioAppWatcher:
             entries = [(v["process"], v["last_heard"]) for v in self._known.values()]
         return sorted(entries, key=lambda e: e[1], reverse=True)
 
-    # ---- Hintergrund ----
+    def level(self, process_name):
+        """(Lautstärke, stumm) einer App oder von "master"; None, solange unbekannt."""
+        with self._lock:
+            return self._levels.get(process_name.lower())
+
+    def sessions(self):
+        with self._lock:
+            return list(self._sessions)
+
+    def set_volume(self, process_name, volume):
+        self._queue(process_name, "volume", max(0.0, min(1.0, volume)))
+
+    def set_mute(self, process_name, mute):
+        self._queue(process_name, "mute", bool(mute))
+
+    def _queue(self, process_name, kind, value):
+        key = process_name.lower()
+        with self._lock:
+            # Beim Ziehen am Regler kommen viele Werte: nur der neueste zählt
+            self._pending[(key, kind)] = value
+            # Sofort so anzeigen, als wäre es schon gesetzt, sonst springt der Regler kurz zurück
+            volume, mute = self._levels.get(key, (0.5, False))
+            self._levels[key] = (value, mute) if kind == "volume" else (volume, value)
+        self._wake.set()
+
+    # ---- Audio-Thread ----
 
     def _run(self):
         # COM für diesen Thread einschalten (pycaw spricht über COM mit Windows)
@@ -101,32 +140,48 @@ class AudioAppWatcher:
         ensure_com()
 
         while True:
+            started = time.monotonic()
             try:
-                running, heard = self._scan()
-                now = time.time()
-                with self._lock:
-                    self._running = running
-                    self._ready = True
-                    for process_name in heard:
-                        self._last_sound[process_name.lower()] = time.monotonic()
-                    is_new = merge_heard(self._known, heard, now)
-                    if heard:
-                        self._dirty = True
-                    if is_new or (self._dirty and now - self._last_save >= SAVE_EVERY_S):
-                        save_known(self._known)
-                        self._last_save = now
-                        self._dirty = False
-                if is_new:
-                    print(f"Mixer: neue App mit Ton gemerkt: {', '.join(sorted(heard))}")
+                self._tick()
             except Exception as e:
-                self._report_once(f"Fehler beim Beobachten der Audio-Apps: {e}")
-            time.sleep(WATCH_INTERVAL_S)
+                self._report_once(f"Fehler im Audio-Dienst: {e}")
+            self._last_tick = time.monotonic()
+            # Warten bis zum nächsten Durchgang, aber sofort weiter, wenn ein Befehl kommt
+            self._wake.wait(max(0.0, WATCH_INTERVAL_S - (self._last_tick - started)))
+            self._wake.clear()
+
+    def _tick(self):
+        running, heard, levels, sessions, controls = self._scan()
+        self._apply_pending(controls, levels)
+
+        now = time.time()
+        with self._lock:
+            # Befehle, die während des Durchgangs neu kamen, nicht mit alten Werten überschreiben
+            for key, kind in self._pending:
+                if key in self._levels:
+                    levels[key] = self._levels[key]
+            self._running = running
+            self._levels = levels
+            self._sessions = sessions
+            self._ready = True
+            for process_name in heard:
+                self._last_sound[process_name.lower()] = time.monotonic()
+            new_apps = {p for p in heard if p.lower() not in self._known}
+            merge_heard(self._known, heard, now)
+            if heard:
+                self._dirty = True
+            if new_apps or (self._dirty and now - self._last_save >= SAVE_EVERY_S):
+                save_known(self._known)
+                self._last_save = now
+                self._dirty = False
+        if new_apps:
+            print(f"Mixer: neue App mit Ton gemerkt: {', '.join(sorted(new_apps))}")
 
     def _scan(self):
         # Pegelmesser direkt aus pycaw (comtypes.gen.AudioControlLib gibt es nicht, damit schlug es immer still fehl)
-        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
+        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation, ISimpleAudioVolume
 
-        running, heard = set(), set()
+        running, heard, levels, sessions, controls = set(), set(), {}, [], {}
         for session in AudioUtilities.GetAllSessions():
             pid = session.ProcessId
             if not pid:
@@ -139,7 +194,16 @@ class AudioAppWatcher:
                 continue
             if is_blacklisted(process_name) or state == SESSION_STATE_EXPIRED:
                 continue
-            running.add(process_name.lower())
+            key = process_name.lower()
+            running.add(key)
+
+            try:
+                volume = session._ctl.QueryInterface(ISimpleAudioVolume)
+                controls.setdefault(key, []).append(volume)
+                if key not in levels:
+                    levels[key] = (float(volume.GetMasterVolume()), bool(volume.GetMute()))
+            except Exception as e:
+                self._report_once(f"Lautstärke von {process_name} nicht lesbar: {e}")
 
             try:
                 meter = session._ctl.QueryInterface(IAudioMeterInformation)
@@ -147,7 +211,48 @@ class AudioAppWatcher:
                     heard.add(process_name)
             except Exception as e:
                 self._report_once(f"Pegel von {process_name} nicht lesbar: {e}")
-        return running, heard
+
+            if state == SESSION_STATE_ACTIVE:
+                sessions.append({"name": f"{clean_name(process_name)} ({pid})", "process_name": process_name, "pid": pid})
+
+        master = self._master_control()
+        if master is not None:
+            try:
+                levels[MASTER] = (float(master.GetMasterVolumeLevelScalar()), bool(master.GetMute()))
+            except Exception as e:
+                self._master = None  # z. B. Ausgabegerät gewechselt: beim nächsten Mal neu holen
+                self._report_once(f"Master-Lautstärke nicht lesbar: {e}")
+        return running, heard, levels, sessions, controls
+
+    def _master_control(self):
+        if getattr(self, "_master", None) is None:
+            from core.audio_manager import AudioManager
+            self._master = AudioManager.get_master_volume_control()
+        return self._master
+
+    def _apply_pending(self, controls, levels):
+        with self._lock:
+            pending, self._pending = self._pending, {}
+        for (key, kind), value in pending.items():
+            try:
+                if key == MASTER:
+                    master = self._master_control()
+                    if master is None:
+                        continue
+                    if kind == "volume":
+                        master.SetMasterVolumeLevelScalar(value, None)
+                    else:
+                        master.SetMute(value, None)
+                else:
+                    for control in controls.get(key, []):
+                        if kind == "volume":
+                            control.SetMasterVolume(value, None)
+                        else:
+                            control.SetMute(value, None)
+                volume, mute = levels.get(key, (0.5, False))
+                levels[key] = (value, mute) if kind == "volume" else (volume, value)
+            except Exception as e:
+                self._report_once(f"{kind} für {key} nicht setzbar: {e}")
 
     def _report_once(self, message):
         if message not in self._reported:
