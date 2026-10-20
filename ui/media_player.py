@@ -3,6 +3,8 @@ import tkinter.font as tkfont
 import customtkinter as ctk
 from config import COLORS
 from core.media_session import MediaSession, REPEAT_CYCLE, current_position, format_time
+from core.spotify import SpotifyClient, apply_spotify
+from ui.spotify_ui import QueuePanel
 
 REFRESH_MS = 250
 COVER_PX = 80
@@ -50,11 +52,12 @@ def fit_text(text, font, max_width):
 
 
 class MediaPlayerPanel(ctk.CTkFrame):
-    def __init__(self, master, session=None, **kwargs):
+    def __init__(self, master, session=None, spotify=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
 
-        # session=False nur zum Testen ohne echte Windows-Schnittstelle
+        # session=False / spotify=False nur zum Testen ohne echte Windows- bzw. Spotify-Anbindung
         self.session = session if session is not None else MediaSession()
+        self.spotify = spotify if spotify is not None else SpotifyClient()
         self.state = None
         self.dragging = False
         self._shown = {}  # zuletzt angezeigte Werte, damit nur Änderungen neu gezeichnet werden
@@ -68,8 +71,7 @@ class MediaPlayerPanel(ctk.CTkFrame):
                               text_color=COLORS["text"], anchor="w")
         header.pack(fill="x", pady=(0, 4))
 
-        # Karte "läuft gerade": nimmt nur so viel Höhe, wie sie braucht.
-        # Darunter ist Platz für die Spotify-Warteschlange (Schritt 2).
+        # Karte "läuft gerade": nimmt nur so viel Höhe, wie sie braucht, darunter die Spotify-Warteschlange
         self.card = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12)
         self.card.pack(fill="x", pady=4)
         inner = ctk.CTkFrame(self.card, fg_color="transparent")
@@ -78,6 +80,11 @@ class MediaPlayerPanel(ctk.CTkFrame):
         self._build_now_playing(inner)
         self._build_progress(inner)
         self._build_controls(inner)
+
+        self.queue_panel = None
+        if self.spotify:
+            self.queue_panel = QueuePanel(self, self.spotify, fit_text)
+            self.queue_panel.pack(fill="x", pady=4)
 
         if self.session:
             self.after(REFRESH_MS, self.refresh)
@@ -180,6 +187,15 @@ class MediaPlayerPanel(ctk.CTkFrame):
         if self.session:
             self.session.command(name, value)
 
+    def _seek(self, seconds):
+        """Spulen über Spotify, wenn Windows bei Spotify nicht spulen kann, sonst über Windows."""
+        if self.state.get("seek_via_spotify"):
+            self.spotify.patch(progress=seconds)
+            self.spotify.command("seek", seconds)
+        else:
+            self.session.patch_state(base_position=seconds, base_time=time.monotonic())
+            self._send("seek", seconds)
+
     def _on_play_pause(self):
         state = self.state
         if not state:
@@ -187,12 +203,14 @@ class MediaPlayerPanel(ctk.CTkFrame):
         # Symbol sofort umschalten, damit sich das Tippen direkt anfühlt
         self.session.patch_state(playing=not state["playing"],
                                  base_position=current_position(state), base_time=time.monotonic())
+        if state.get("seek_via_spotify"):
+            # Zeitleiste kommt gerade von Spotify: dort ebenfalls sofort umschalten
+            self.spotify.patch(is_playing=not state["playing"], progress=current_position(state))
         self._send("play_pause")
         self.refresh(reschedule=False)
 
     def _seek_to(self, seconds):
-        self.session.patch_state(base_position=seconds, base_time=time.monotonic())
-        self._send("seek", seconds)
+        self._seek(seconds)
         self.refresh(reschedule=False)
 
     def _on_previous(self):
@@ -219,9 +237,15 @@ class MediaPlayerPanel(ctk.CTkFrame):
         state = self.state
         if not state:
             return
-        new_value = not bool(state["shuffle"])
-        self.session.patch_state(shuffle=new_value)
-        self._send("shuffle", new_value)
+        if state.get("via_spotify"):
+            # Smart Shuffle lässt sich über die Web API nicht einschalten: an -> aus, aus -> normaler Shuffle
+            new_value = not (state["shuffle"] or state["smart_shuffle"])
+            self.spotify.patch(shuffle=new_value, smart_shuffle=False)
+            self.spotify.command("shuffle", new_value)
+        else:
+            new_value = not bool(state["shuffle"])
+            self.session.patch_state(shuffle=new_value)
+            self._send("shuffle", new_value)
         self.refresh(reschedule=False)
 
     def _on_repeat(self):
@@ -229,8 +253,12 @@ class MediaPlayerPanel(ctk.CTkFrame):
         if not state:
             return
         new_mode = REPEAT_CYCLE[state["repeat"] or "off"]
-        self.session.patch_state(repeat=new_mode)
-        self._send("repeat", new_mode)
+        if state.get("via_spotify"):
+            self.spotify.patch(repeat=new_mode)
+            self.spotify.command("repeat", new_mode)
+        else:
+            self.session.patch_state(repeat=new_mode)
+            self._send("repeat", new_mode)
         self.refresh(reschedule=False)
 
     def _on_slider_press(self, event):
@@ -246,25 +274,32 @@ class MediaPlayerPanel(ctk.CTkFrame):
         state = self.state
         if not state or not state["can_seek"]:
             return
-        target = self.slider.get() * state["duration"]
-        self.session.patch_state(base_position=target, base_time=time.monotonic())
-        self._send("seek", target)
+        self._seek(self.slider.get() * state["duration"])
 
     # ------------------------------------------------------------------------------------------------
     # Anzeige
     # ------------------------------------------------------------------------------------------------
 
     def refresh(self, reschedule=True):
-        self.show_state(self.session.get_state())
+        state = self.session.get_state()
+        sp = None
+        if self.spotify:
+            # Spotify nur abfragen, während Spotify wirklich die laufende Wiedergabe ist
+            self.spotify.set_active(state["active"] and state["app"] == "Spotify")
+            sp = self.spotify.get_state()
+            state = apply_spotify(state, sp)
+        self.show_state(state, sp)
         if reschedule:
             self.after(REFRESH_MS, self.refresh)
 
-    def show_state(self, state):
+    def show_state(self, state, sp=None):
         self.state = state
         self._update_texts()
         self._update_cover()
         self._update_progress()
         self._update_buttons()
+        if self.queue_panel is not None and sp is not None:
+            self.queue_panel.show(state, sp)
 
     def _set_once(self, key, value, apply):
         """Ruft apply(value) nur auf, wenn sich value geändert hat (verhindert Flackern)."""
@@ -349,11 +384,16 @@ class MediaPlayerPanel(ctk.CTkFrame):
         self._set_once("can_next", active and (state["can_next"] or state["can_seek"]),
                        lambda on: enable(self.btn_next, on))
 
-        # Shuffle/Wiederholen: grün = an, grau = aus, ausgegraut = von der App nicht unterstützt
-        shuffle_on = bool(state["shuffle"])
-        self._set_once("shuffle", (active and state["can_shuffle"], shuffle_on), lambda v: (
+        # Shuffle/Wiederholen: grün = an, grau = aus, ausgegraut = von der App nicht unterstützt.
+        # Smart Shuffle von Spotify: blau
+        if state.get("smart_shuffle"):
+            shuffle_mode = "smart"
+        else:
+            shuffle_mode = "on" if state["shuffle"] else "off"
+        shuffle_colors = {"off": COLORS["muted_text"], "on": COLORS["good"], "smart": COLORS["accent_hover"]}
+        self._set_once("shuffle", (active and state["can_shuffle"], shuffle_mode), lambda v: (
             enable(self.btn_shuffle, v[0]),
-            self.btn_shuffle.configure(text_color=COLORS["good"] if v[1] else COLORS["muted_text"])
+            self.btn_shuffle.configure(text_color=shuffle_colors[v[1]])
         ))
 
         repeat = state["repeat"] or "off"

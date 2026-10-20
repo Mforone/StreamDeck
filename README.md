@@ -9,6 +9,7 @@ Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Co
 - **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Tippen auf dem Touchscreen springt die Maus dorthin zurück, wo sie vorher war. Mit der echten Maus lässt sich das Panel ganz normal bedienen und einstellen. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
 - **Systemmonitor** (rechts unten): Auslastung von CPU, GPU und RAM als Dreiviertelkreis, grün unter 60 %, gelb ab 60 %, rot ab 85 %. RAM zusätzlich in GB. Die GPU wird wie im Task-Manager über die Windows-Leistungsindikatoren gelesen (NVIDIA, AMD, Intel).
 - **Mediaplayer** (rechts oben): zeigt Cover, Titel und Interpret von dem, was gerade läuft (Spotify, YouTube im Browser, VLC …), mit Zeitleiste zum Spulen, Zurück/Pause/Weiter sowie Shuffle und Wiederholen, wenn die App das unterstützt. Nutzt die Windows-Medienschnittstelle (Pakete in `requirements-media.txt`, optional).
+- **Spotify** (unter dem Mediaplayer): die nächsten 5 Lieder der Warteschlange (antippen = dorthin springen), Shuffle (aus/an, Smart Shuffle wird blau angezeigt) und Wiederholen (aus/Liste/Lied) über die Spotify Web API. Braucht eine eigene Spotify-App unter developer.spotify.com (Konto mit Premium), Redirect URI `http://127.0.0.1:8765/callback`. Die Anmeldung landet in `data/spotify_token.json` (nicht im Repo).
 
 ## Voraussetzungen
 
@@ -48,4 +49,6 @@ Alle Knöpfe stehen in `data/config.json`. Die Datei wird beim ersten Start mit 
 | `core/system_monitor.py` | Misst CPU, RAM (psutil) und GPU (Windows-PDH) im Hintergrund |
 | `core/media_session.py` | Liest und steuert die laufende Wiedergabe über die Windows-Medienschnittstelle |
 | `ui/media_player.py` | Mediaplayer-Ansicht |
+| `core/spotify.py` | Spotify-Anmeldung (PKCE) und Web API im Hintergrund |
+| `ui/spotify_ui.py` | Warteschlange und Verbinden-Dialog |
 | `ui/system_monitor.py` | Dreiviertelkreis-Anzeigen des Systemmonitors |

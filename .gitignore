@@ -10,5 +10,9 @@ venv/
 # Persönliche Konfiguration (wird beim ersten Start automatisch angelegt)
 data/config.json
 
+# Spotify-Zugangsdaten (nie hochladen!)
+data/spotify_token.json
+data/spotify_token.json.tmp
+
 # Logdatei (Start ohne Konsole über pythonw.exe)
 data/*.log
