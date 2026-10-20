@@ -1,3 +1,4 @@
 pycaw
 customtkinter
 psutil
+Pillow

@@ -1,8 +1,19 @@
 # StreamDeck
 
-Ein Software-Stream-Deck für Windows: frei belegbare Knöpfe (Programme, Webseiten, Hotkeys, Sounds) und ein Audio-Mixer pro Anwendung.
+Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Control-Panel mit frei belegbaren App-Knöpfen und einem Audio-Mixer pro Anwendung.
 
-## Start
+## Funktionen
+
+- **App-Knöpfe** (linke Leiste): starten Programme oder öffnen Webseiten, mit eigenem Namen, Icon und Farben. Bearbeiten und Löschen über das Knopf-Menü, neue Knöpfe über „+ App-Button“.
+- **Audio-Mixer** (Mitte): Lautstärke und Stummschaltung für das ganze System und für jede Anwendung, die gerade Ton ausgibt.
+- **Rechte Leiste**: Platz für Mediaplayer und Systemmonitor (in Arbeit).
+
+## Voraussetzungen
+
+- Windows 10 oder 11 (der Mixer nutzt die Windows-Audio-Schnittstelle über pycaw)
+- Python 3.12 oder neuer
+
+## Installation und Start
 
 ```
 python -m venv .venv
@@ -11,4 +22,21 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Beim ersten Start wird `data/config.json` mit Standardknöpfen angelegt.
+Die App startet im Vollbild, `Esc` beendet sie.
+
+## Konfiguration
+
+Alle Knöpfe stehen in `data/config.json`. Die Datei wird beim ersten Start mit Standardknöpfen angelegt und danach von der App selbst gepflegt. Sie enthält persönliche Pfade und ist deshalb nicht im Repo (siehe `.gitignore`).
+
+## Aufbau
+
+| Pfad | Inhalt |
+|---|---|
+| `main.py` | Einstiegspunkt |
+| `config.py` | Farbschema |
+| `core/config_manager.py` | Laden und Speichern von `data/config.json` |
+| `core/audio_manager.py` | Lautstärke und Stummschaltung über pycaw |
+| `ui/main_window.py` | Hauptfenster und Layout |
+| `ui/StreamDeckFunktion.py` | App-Knöpfe und ihre Aktionen |
+| `ui/edit_dialog.py` | Dialog zum Bearbeiten eines Knopfs |
+| `ui/audio_mixer.py` | Mixer-Ansicht |
