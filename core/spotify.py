@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import secrets
+import socket
 import threading
 import time
 import urllib.error
@@ -203,35 +204,89 @@ align-items:center;justify-content:center;height:100vh;margin:0"><div style="tex
 <h2>{title}</h2><p style="color:#8888AA">{text}</p></div></body></html>"""
 
 
+class _CallbackServer(HTTPServer):
+    # Pythons Standard (Port wiederverwenden) erlaubt unter Windows einen ZWEITEN Server auf demselben Port.
+    # Dann fängt womöglich ein anderes Programm die Antwort ab. Deshalb unter Windows: Port exklusiv belegen.
+    # Unter Linux/macOS ist Wiederverwenden harmlos (dort lauschen trotzdem nie zwei Server gleichzeitig).
+    allow_reuse_address = not hasattr(socket, "SO_EXCLUSIVEADDRUSE")
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # nur unter Windows vorhanden
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+class _CallbackHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/callback":
+            self.send_error(404)
+            return
+        login = _current_login
+        if login is None:
+            title, text = "Anmeldung abgelaufen", "Bitte im Control Panel nochmal auf „Im Browser anmelden“ tippen."
+        else:
+            title, text = login._handle_callback(urllib.parse.parse_qs(parsed.query))
+        page = DONE_PAGE.format(title=title, text=text).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(page)))
+        self.end_headers()
+        self.wfile.write(page)
+
+    def log_message(self, *args):
+        pass  # Die Anfrage-URL enthält den Anmelde-Code: nicht ins Log schreiben
+
+
+# Ein einziger Rückweg-Server für die ganze Laufzeit des Programms. Er wird beim ersten Anmelden gestartet
+# und reicht jede Antwort an die gerade laufende Anmeldung weiter. So muss der Port nie neu belegt werden
+# (das Betriebssystem sperrt ihn nach dem Schließen noch eine Weile).
+_server = None
+_current_login = None
+_lock = threading.Lock()
+
+
+def _ensure_server():
+    global _server
+    if _server is None:
+        server = _CallbackServer(("127.0.0.1", REDIRECT_PORT), _CallbackHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        _server = server
+
+
 class SpotifyLogin:
-    """Öffnet einen kleinen Webserver auf 127.0.0.1:8765, auf den Spotify nach der Anmeldung zurückleitet."""
+    """Ein Anmeldeversuch. Es zählt immer nur der neueste: ein neuer Versuch macht ältere ungültig."""
 
     def __init__(self, client_id, opener=urllib.request.urlopen):
         self.client_id = client_id.strip()
         self.opener = opener
         self.verifier, challenge = make_pkce_pair()
-        self.state = secrets.token_urlsafe(16)  # Schutz: nur unsere eigene Anfrage wird angenommen
+        self.state = secrets.token_urlsafe(16)  # Schutz: nur die Antwort auf genau diesen Versuch wird angenommen
         self.url = build_auth_url(self.client_id, challenge, self.state)
-        self.status = "waiting"  # waiting / ok / error
+        self.status = "waiting"  # waiting / ok / error / cancelled
         self.message = ""
         self.tokens = None
+        self._busy = threading.Lock()
 
     def start(self):
-        try:
-            server = HTTPServer(("127.0.0.1", REDIRECT_PORT), self._make_handler())
-        except OSError:
-            self._finish("error", f"Port {REDIRECT_PORT} ist belegt. Läuft das Control Panel zweimal?")
-            return False
-        server.timeout = 1
-        threading.Thread(target=self._serve, args=(server,), daemon=True).start()
+        global _current_login
+        with _lock:
+            try:
+                _ensure_server()
+            except OSError:
+                self._finish("error", f"Port {REDIRECT_PORT} ist belegt. Läuft das Control Panel zweimal? "
+                                      f"Dann im Task-Manager alle \"pythonw.exe\" beenden, sonst kurz warten.")
+                return False
+            if _current_login is not None and _current_login.status == "waiting":
+                _current_login._finish("cancelled")
+            _current_login = self
+
+        timer = threading.Timer(LOGIN_TIMEOUT_S, self._timeout)
+        timer.daemon = True
+        timer.start()
         return True
 
-    def _serve(self, server):
-        # handle_request() statt serve_forever(): so lässt sich nach Erfolg oder Zeitablauf sauber aufhören
-        deadline = time.time() + LOGIN_TIMEOUT_S
-        while self.status == "waiting" and time.time() < deadline:
-            server.handle_request()
-        server.server_close()
+    def _timeout(self):
         if self.status == "waiting":
             self._finish("error", "Zeit abgelaufen, bitte nochmal versuchen.")
 
@@ -241,49 +296,35 @@ class SpotifyLogin:
         if message:
             print(f"Spotify: Anmeldung {status}: {message}")
 
-    def _make_handler(self):
-        login = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                parsed = urllib.parse.urlparse(self.path)
-                if parsed.path != "/callback":
-                    self.send_error(404)
-                    return
-                params = urllib.parse.parse_qs(parsed.query)
-                title, text = login._handle_callback(params)
-                page = DONE_PAGE.format(title=title, text=text).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(page)))
-                self.end_headers()
-                self.wfile.write(page)
-
-            def log_message(self, *args):
-                pass  # Die Anfrage-URL enthält den Anmelde-Code: nicht ins Log schreiben
-
-        return Handler
-
     def _handle_callback(self, params):
-        if params.get("state", [""])[0] != self.state:
-            return "Ungültige Anfrage", "Diese Anmeldung gehört nicht zum Control Panel."
-        if "error" in params:
-            reason = params["error"][0]
-            self._finish("error", "Anmeldung abgebrochen." if reason == "access_denied" else f"Spotify meldet: {reason}")
-            return "Nicht verbunden", self.message
-        code = params.get("code", [""])[0]
-        try:
-            self.tokens = exchange_code(self.client_id, code, self.verifier, self.opener)
-            save_tokens(self.tokens)
-        except urllib.error.HTTPError as e:
-            self._finish("error", f"Spotify lehnt die Anmeldung ab (Fehler {e.code}). Stimmen Client ID und Redirect URI?")
-            return "Nicht verbunden", self.message
-        except Exception as e:
-            self._finish("error", f"Anmeldung fehlgeschlagen: {type(e).__name__}")
-            return "Nicht verbunden", self.message
-        self._finish("ok")
-        print("Spotify: verbunden")
-        return "Spotify verbunden", "Du kannst dieses Fenster schließen."
+        # Lock: falls der Browser die Seite doppelt aufruft, den Code nur einmal eintauschen
+        with self._busy:
+            if self.status == "ok":
+                return "Spotify verbunden", "Du kannst dieses Fenster schließen."
+            if self.status != "waiting":
+                return "Anmeldung abgelaufen", "Bitte im Control Panel nochmal auf „Im Browser anmelden“ tippen."
+            if params.get("state", [""])[0] != self.state:
+                print("Spotify: Antwort mit fremdem state verworfen")
+                return ("Veraltete Anmeldung",
+                        "Diese Antwort gehört zu einem älteren Anmeldeversuch. "
+                        "Bitte im Control Panel nochmal auf „Im Browser anmelden“ tippen.")
+            if "error" in params:
+                reason = params["error"][0]
+                self._finish("error", "Anmeldung abgebrochen." if reason == "access_denied" else f"Spotify meldet: {reason}")
+                return "Nicht verbunden", self.message
+            code = params.get("code", [""])[0]
+            try:
+                self.tokens = exchange_code(self.client_id, code, self.verifier, self.opener)
+                save_tokens(self.tokens)
+            except urllib.error.HTTPError as e:
+                self._finish("error", f"Spotify lehnt die Anmeldung ab (Fehler {e.code}). Stimmen Client ID und Redirect URI?")
+                return "Nicht verbunden", self.message
+            except Exception as e:
+                self._finish("error", f"Anmeldung fehlgeschlagen: {type(e).__name__}")
+                return "Nicht verbunden", self.message
+            self._finish("ok")
+            print("Spotify: verbunden")
+            return "Spotify verbunden", "Du kannst dieses Fenster schließen."
 
 
 # ---------------------------------------------------------------------------------------------------------
