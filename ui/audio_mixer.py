@@ -1,8 +1,16 @@
 import time
 import customtkinter as ctk
 from config import COLORS
-from core.audio_apps import clean_name
+from core.audio_apps import MIC, clean_name
+from core.mic_monitor import APP_ZONES, MIN_DB, mic_zones, to_db
+from ui.level_meter import LevelMeter, format_db
 from ui.colors import contrast_text, mix
+
+
+METER_REFRESH_MS = 33       # Pegelanzeige ~30-mal pro Sekunde neu zeichnen
+DB_LABEL_EVERY = 6          # dB-Zahl nur jedes 6. Mal (5-mal pro Sekunde), sonst flimmert sie unlesbar
+MODE_APP = "app"
+MODE_MIC = "mic"
 
 
 def channel_colors(color):
@@ -24,7 +32,8 @@ def channel_colors(color):
 
 
 class AudioChannelStrip(ctk.CTkFrame):
-    def __init__(self, master, channel_num: int, is_master: bool = False, audio=None, **kwargs):
+    def __init__(self, master, channel_num: int, is_master: bool = False, audio=None,
+                 meter=False, mic=None, mode=MODE_APP, on_mode_change=None, **kwargs):
         super().__init__(
             master,
             fg_color=COLORS["card"],
@@ -36,6 +45,13 @@ class AudioChannelStrip(ctk.CTkFrame):
         # audio: der Audio-Dienst (core/audio_apps.py). Alle Windows-Audio-Aufrufe laufen dort im Hintergrund,
         # dieser Kanal liest nur fertige Werte und legt Befehle ab: so kann die Oberfläche nie hängen bleiben
         self.audio = audio
+        # Kanal mit Pegelanzeige (Kanal 8): umschaltbar zwischen App und Mikrofon
+        self.has_meter = meter
+        self.mic = mic
+        self.mode = mode if meter else MODE_APP
+        self.on_mode_change = on_mode_change
+        self._meter_target = None
+        self._meter_frame = 0
         self.channel_num = channel_num
         self.is_master = is_master
         self.selected_process = "master" if is_master else ""
@@ -51,6 +67,9 @@ class AudioChannelStrip(ctk.CTkFrame):
 
         self.setup_ui(initial_vol)
         self.update_channel_appearance()
+        if self.has_meter:
+            self.set_mode(self.mode, notify=False)
+            self.after(METER_REFRESH_MS, self._update_meter)
 
     def setup_ui(self, initial_vol: float):
         container = ctk.CTkFrame(self, fg_color="transparent")
@@ -74,6 +93,22 @@ class AudioChannelStrip(ctk.CTkFrame):
             )
             self.lbl_channel.pack(pady=(0, 2))
 
+            if self.has_meter:
+                # Umschalter: Pegel einer App oder des eigenen Mikrofons
+                self.mode_switch = ctk.CTkSegmentedButton(
+                    container,
+                    values=["App", "🎙 Mic"],
+                    font=("Helvetica", 10, "bold"),
+                    height=22,
+                    selected_color=COLORS["accent"],
+                    selected_hover_color=COLORS["accent_hover"],
+                    unselected_color=COLORS["bg"],
+                    unselected_hover_color=COLORS["card_hover"],
+                    fg_color=COLORS["bg"],
+                    command=lambda value: self.set_mode(MODE_MIC if "Mic" in value else MODE_APP)
+                )
+                self.mode_switch.pack(fill="x", pady=(0, 4))
+
             self.btn_select = ctk.CTkButton(
                 container,
                 text="-- Auswählen -- ▾",
@@ -92,6 +127,10 @@ class AudioChannelStrip(ctk.CTkFrame):
         # 2. Vertikaler Fader mit farbigem Fortschrittsbalken
         fader_frame = ctk.CTkFrame(container, fg_color="transparent")
         fader_frame.pack(fill="both", expand=True, pady=2)
+        if self.has_meter:
+            # Regler und Pegelanzeige nebeneinander, zusammen mittig
+            fader_frame = ctk.CTkFrame(fader_frame, fg_color="transparent")
+            fader_frame.pack(fill="y", expand=True)
 
         self.slider = ctk.CTkSlider(
             fader_frame,
@@ -107,7 +146,13 @@ class AudioChannelStrip(ctk.CTkFrame):
         self.slider.set(initial_vol)
         # Standardfarbe der Slider-Spur merken, inaktive Kanäle bekommen sie zurück
         self._default_track = self.slider.cget("fg_color")
-        self.slider.pack(fill="y", expand=True)
+        if self.has_meter:
+            self.slider.pack(side="left", fill="y", expand=True)
+            self.meter = LevelMeter(fader_frame, orientation="vertical", bg=COLORS["card"])
+            self.meter.configure(width=12)
+            self.meter.pack(side="left", fill="y", padx=(6, 0), pady=8)
+        else:
+            self.slider.pack(fill="y", expand=True)
 
         self.slider.bind("<ButtonPress-1>", lambda e: setattr(self, "is_dragging", True))
         self.slider.bind("<ButtonRelease-1>", self.on_drag_release)
@@ -119,7 +164,11 @@ class AudioChannelStrip(ctk.CTkFrame):
             font=("Helvetica", 12, "bold"),
             text_color=COLORS["text"]
         )
-        self.lbl_percent.pack(pady=(6, 4))
+        self.lbl_percent.pack(pady=(6, 0 if self.has_meter else 4))
+        if self.has_meter:
+            self.lbl_db = ctk.CTkLabel(container, text="-∞ dB", font=("Helvetica", 10, "bold"),
+                                       text_color=COLORS["muted_text"], height=16)
+            self.lbl_db.pack(pady=(0, 4))
 
         # 4. Kompakte Feineinstellungs-Buttons (▼ / ▲)
         step_box = ctk.CTkFrame(container, fg_color="transparent")
@@ -327,6 +376,41 @@ class AudioChannelStrip(ctk.CTkFrame):
         self.update_channel_appearance()
         self.sync_from_system()
 
+    def set_mode(self, mode, notify=True):
+        """Kanal 8: zwischen App und Mikrofon umschalten."""
+        self.mode = mode
+        self.mode_switch.set("🎙 Mic" if mode == MODE_MIC else "App")
+        if mode == MODE_MIC:
+            # Regler und Stumm-Knopf steuern jetzt das Windows-Mikrofon
+            self.select_app(MIC, "🎙 Mikrofon")
+            self.btn_select.configure(state="disabled")
+        else:
+            self.btn_select.configure(state="normal")
+            if self.selected_process == MIC:
+                self.select_app("")
+        if notify and self.on_mode_change:
+            self.on_mode_change(mode)
+
+    def _update_meter(self):
+        if self.mode == MODE_MIC:
+            level = self.mic.level_db() if self.mic else MIN_DB
+            red_from, yellow_from = mic_zones(self.mic.settings["threshold_db"]) if self.mic else APP_ZONES
+            target = ""
+        else:
+            target = self.selected_process
+            level = to_db(self.audio.meter_peak()) if self.audio and target else MIN_DB
+            red_from, yellow_from = APP_ZONES
+        # Dem Audio-Dienst sagen, welche App er schnell messen soll (nur bei Änderung)
+        if self.audio and target != self._meter_target:
+            self.audio.set_meter_target(target)
+            self._meter_target = target
+
+        self.meter.set_level(level, red_from, yellow_from)
+        self._meter_frame += 1
+        if self._meter_frame % DB_LABEL_EVERY == 0:
+            self.lbl_db.configure(text=format_db(self.meter.shown_db))
+        self.after(METER_REFRESH_MS, self._update_meter)
+
     def set_color(self, color):
         self.color = color or COLORS["accent"]
         self.update_channel_appearance()
@@ -367,7 +451,8 @@ class AudioChannelStrip(ctk.CTkFrame):
 
 
 class AudioMixerPanel(ctk.CTkFrame):
-    def __init__(self, master, watcher=None, channel_settings=None, idle_seconds=10, **kwargs):
+    def __init__(self, master, watcher=None, channel_settings=None, idle_seconds=10, mic=None,
+                 on_settings_changed=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.channels = []
         # watcher: AudioAppWatcher (welche Apps Ton abgeben), channel_settings: {"2": {"app": "Discord.exe", "color": "#5865F2"}, ...}
@@ -375,6 +460,8 @@ class AudioMixerPanel(ctk.CTkFrame):
         self.channel_settings = channel_settings if channel_settings is not None else {}
         # So viele Sekunden ohne Ton, dann gibt eine App ihren Kanal frei (kurze Pausen sollen nicht flackern)
         self.idle_seconds = idle_seconds
+        self.mic = mic  # Mikrofon-Überwachung für die Pegelanzeige von Kanal 8
+        self.on_settings_changed = on_settings_changed  # z. B. Umschalten von Kanal 8 speichern
         self._previous_running = None
         self.setup_ui()
         self.apply_channel_settings()
@@ -401,14 +488,25 @@ class AudioMixerPanel(ctk.CTkFrame):
 
         for i in range(8):
             is_master = (i == 0)
+            number = i + 1
+            meter_channel = number == 8
             strip = AudioChannelStrip(
                 channels_frame,
-                channel_num=i + 1,
+                channel_num=number,
                 is_master=is_master,
-                audio=self.watcher
+                audio=self.watcher,
+                meter=meter_channel,
+                mic=self.mic if meter_channel else None,
+                mode=self.channel_settings.get("8", {}).get("mode", MODE_APP),
+                on_mode_change=(lambda mode: self._save_mode(8, mode)) if meter_channel else None
             )
             strip.grid(row=0, column=i, padx=2, pady=0, sticky="nsew")
             self.channels.append(strip)
+
+    def _save_mode(self, number, mode):
+        self.channel_settings.setdefault(str(number), {})["mode"] = mode
+        if self.on_settings_changed:
+            self.on_settings_changed()
 
     def apply_channel_settings(self):
         """Farben aus den Einstellungen übernehmen und feste Apps sofort neu zuordnen."""
@@ -426,6 +524,8 @@ class AudioMixerPanel(ctk.CTkFrame):
         self._previous_running = set(sounding)
 
         for channel in self.channels[1:]:
+            if channel.mode == MODE_MIC:
+                continue  # Kanal zeigt das Mikrofon, keine App-Automatik
             selected = channel.selected_process.lower()
             # Frisch gewählte Apps bekommen dieselbe Frist, sonst würde eine gerade pausierte App sofort wieder fliegen
             if selected and selected not in sounding and now - channel.selected_at > self.idle_seconds:

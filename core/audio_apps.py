@@ -15,6 +15,8 @@ from core.audio_manager import APP_BLACKLIST
 # (z. B. weil ein Spiel gerade seine Audiositzung umbaut), friert so höchstens der Mixer kurz ein, nie die ganze App.
 
 WATCH_INTERVAL_S = 0.25
+METER_INTERVAL_S = 1 / 30  # Pegel der App für den Lautstärkemesser: 30-mal pro Sekunde
+DEVICE_REFRESH_S = 5.0     # Standard-Lautsprecher/-Mikrofon neu holen (falls in Windows gewechselt)
 APPS_FILE = os.path.join("data", "audio_apps.json")
 SAVE_EVERY_S = 60          # "zuletzt gehört" höchstens einmal pro Minute auf die Platte schreiben
 AUDIBLE_PEAK = 0.01        # ab 1 % Pegel zählt es als "Ton abgegeben" (wie im Mixer-Dropdown)
@@ -22,6 +24,7 @@ AUDIBLE_PEAK = 0.01        # ab 1 % Pegel zählt es als "Ton abgegeben" (wie im 
 SESSION_STATE_ACTIVE = 1   # AudioSessionStateActive: spielt gerade (Stream offen)
 SESSION_STATE_EXPIRED = 2  # AudioSessionStateExpired: Sitzung beendet
 MASTER = "master"
+MIC = "mic"
 
 
 def clean_name(process_name):
@@ -73,6 +76,13 @@ class AudioAppWatcher:
         self._levels = {}           # Prozessname (klein) oder "master" -> (Lautstärke 0..1, stumm)
         self._sessions = []         # aktive Sitzungen für das Mixer-Dropdown
         self._pending = {}          # (Prozessname klein, "volume"/"mute") -> Wert, wartet auf Ausführung
+        self._meters = {}           # Prozessname (klein) -> Pegelmesser seiner Sitzungen (vom letzten Durchgang)
+        self._meter_target = ""     # App, deren Pegel der Lautstärkemesser gerade zeigt
+        self._meter_peak = 0.0      # letzter Spitzenpegel dieser App (0..1)
+        self._master = None
+        self._mic = None
+        self._mic_id = None
+        self._devices_at = 0.0
         self._ready = False         # erst nach der ersten Abfrage sind die Werte aussagekräftig
         self._last_tick = time.monotonic()
         self._last_save = time.time()
@@ -112,6 +122,18 @@ class AudioAppWatcher:
         with self._lock:
             return self._levels.get(process_name.lower())
 
+    def set_meter_target(self, process_name):
+        """Welche App der Lautstärkemesser zeigen soll ("" = keine)."""
+        self._meter_target = (process_name or "").lower()
+        self._wake.set()
+
+    def meter_peak(self):
+        return self._meter_peak
+
+    def mic_id(self):
+        """Kennung des Standard-Mikrofons, ändert sich bei einem Wechsel in Windows."""
+        return self._mic_id
+
     def sessions(self):
         with self._lock:
             return list(self._sessions)
@@ -139,19 +161,39 @@ class AudioAppWatcher:
         from core.audio_manager import ensure_com
         ensure_com()
 
+        next_scan = 0.0
         while True:
-            started = time.monotonic()
-            try:
-                self._tick()
-            except Exception as e:
-                self._report_once(f"Fehler im Audio-Dienst: {e}")
+            now = time.monotonic()
+            # Voller Durchgang alle 0,25 s, oder sofort, wenn ein Befehl wartet
+            if now >= next_scan or self._pending:
+                try:
+                    self._tick()
+                except Exception as e:
+                    self._report_once(f"Fehler im Audio-Dienst: {e}")
+                next_scan = time.monotonic() + WATCH_INTERVAL_S
+            # Dazwischen nur den Pegel der angezeigten App lesen (billig, deshalb 30-mal pro Sekunde)
+            self._read_meter()
             self._last_tick = time.monotonic()
-            # Warten bis zum nächsten Durchgang, aber sofort weiter, wenn ein Befehl kommt
-            self._wake.wait(max(0.0, WATCH_INTERVAL_S - (self._last_tick - started)))
+            wait = METER_INTERVAL_S if self._meter_target else next_scan - self._last_tick
+            self._wake.wait(max(0.0, wait))
             self._wake.clear()
 
+    def _read_meter(self):
+        target = self._meter_target
+        if not target:
+            self._meter_peak = 0.0
+            return
+        peak = 0.0
+        for meter in self._meters.get(target, []):
+            try:
+                peak = max(peak, float(meter.GetPeakValue()))
+            except Exception:
+                pass
+        self._meter_peak = peak
+
     def _tick(self):
-        running, heard, levels, sessions, controls = self._scan()
+        running, heard, levels, sessions, controls, meters = self._scan()
+        self._meters = meters
         self._apply_pending(controls, levels)
 
         now = time.time()
@@ -181,7 +223,7 @@ class AudioAppWatcher:
         # Pegelmesser direkt aus pycaw (comtypes.gen.AudioControlLib gibt es nicht, damit schlug es immer still fehl)
         from pycaw.pycaw import AudioUtilities, IAudioMeterInformation, ISimpleAudioVolume
 
-        running, heard, levels, sessions, controls = set(), set(), {}, [], {}
+        running, heard, levels, sessions, controls, meters = set(), set(), {}, [], {}, {}
         for session in AudioUtilities.GetAllSessions():
             pid = session.ProcessId
             if not pid:
@@ -207,6 +249,7 @@ class AudioAppWatcher:
 
             try:
                 meter = session._ctl.QueryInterface(IAudioMeterInformation)
+                meters.setdefault(key, []).append(meter)
                 if meter.GetPeakValue() >= AUDIBLE_PEAK:
                     heard.add(process_name)
             except Exception as e:
@@ -215,34 +258,55 @@ class AudioAppWatcher:
             if state == SESSION_STATE_ACTIVE:
                 sessions.append({"name": f"{clean_name(process_name)} ({pid})", "process_name": process_name, "pid": pid})
 
-        master = self._master_control()
-        if master is not None:
+        self._refresh_devices()
+        for key, name in ((MASTER, "Master"), (MIC, "Mikrofon")):
+            control = self._endpoint(key)
+            if control is None:
+                continue
             try:
-                levels[MASTER] = (float(master.GetMasterVolumeLevelScalar()), bool(master.GetMute()))
+                levels[key] = (float(control.GetMasterVolumeLevelScalar()), bool(control.GetMute()))
             except Exception as e:
-                self._master = None  # z. B. Ausgabegerät gewechselt: beim nächsten Mal neu holen
-                self._report_once(f"Master-Lautstärke nicht lesbar: {e}")
-        return running, heard, levels, sessions, controls
+                self._devices_at = 0.0  # z. B. Gerät abgesteckt: beim nächsten Mal neu holen
+                self._report_once(f"{name}-Lautstärke nicht lesbar: {e}")
+        return running, heard, levels, sessions, controls, meters
 
-    def _master_control(self):
-        if getattr(self, "_master", None) is None:
-            from core.audio_manager import AudioManager
-            self._master = AudioManager.get_master_volume_control()
-        return self._master
+    def _endpoint(self, key):
+        return self._master if key == MASTER else self._mic
+
+    def _refresh_devices(self):
+        """Standard-Lautsprecher und -Mikrofon regelmäßig neu holen: in Windows gewechselt = neues Gerät."""
+        if time.monotonic() - self._devices_at < DEVICE_REFRESH_S:
+            return
+        self._devices_at = time.monotonic()
+        from core.audio_manager import AudioManager
+        self._master = AudioManager.get_master_volume_control()
+        try:
+            import comtypes
+            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            device = AudioUtilities.GetMicrophone()
+            mic_id = device.GetId()
+            if mic_id != self._mic_id or self._mic is None:
+                interface = device.Activate(IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None)
+                self._mic = interface.QueryInterface(IAudioEndpointVolume)
+                self._mic_id = mic_id
+        except Exception as e:
+            self._mic = None
+            self._mic_id = None
+            self._report_once(f"Kein Standard-Mikrofon gefunden: {e}")
 
     def _apply_pending(self, controls, levels):
         with self._lock:
             pending, self._pending = self._pending, {}
         for (key, kind), value in pending.items():
             try:
-                if key == MASTER:
-                    master = self._master_control()
-                    if master is None:
+                if key in (MASTER, MIC):
+                    endpoint = self._endpoint(key)
+                    if endpoint is None:
                         continue
                     if kind == "volume":
-                        master.SetMasterVolumeLevelScalar(value, None)
+                        endpoint.SetMasterVolumeLevelScalar(value, None)
                     else:
-                        master.SetMute(value, None)
+                        endpoint.SetMute(value, None)
                 else:
                     for control in controls.get(key, []):
                         if kind == "volume":

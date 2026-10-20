@@ -3,12 +3,24 @@ from tkinter import colorchooser
 import customtkinter as ctk
 from config import COLORS
 from core.audio_apps import clean_name
+from core.mic_monitor import MIN_DB, mic_zones
 from core.monitors import list_monitors, monitor_label
+from ui.level_meter import LevelMeter, format_db
 from ui.colors import contrast_text
 from ui.window_utils import center_over
 
 MIXER_CHANNELS = range(2, 9)  # Kanal 1 ist der Master
 NO_APP = "Keine feste App"
+
+MIC_METER_MS = 33
+
+MIC_STATUS_TEXT = {
+    "startet": "Mikrofon wird geöffnet …",
+    "stumm": "Kein Signal: Mikrofon stummgeschaltet, oder Windows blockiert den Zugriff "
+             "(Einstellungen > Datenschutz > Mikrofon > Desktop-Apps den Zugriff erlauben).",
+    "kein Mikrofon": "Kein Mikrofon gefunden. Ist eins angeschlossen und in Windows als Standard gewählt?",
+    "nicht installiert": "Mikrofon-Pakete fehlen: start.bat einmal neu starten.",
+}
 
 PRESET_COLORS = [
     "#5B8CCC", "#3BB7C9", "#4CC38A", "#1DB954", "#E5B84B", "#E8893A",
@@ -19,7 +31,8 @@ PRESET_COLORS = [
 class SettingsDialog(ctk.CTkToplevel):
     """Einstellungen mit zwei Reitern: Mixer-Kanäle und Monitor."""
 
-    def __init__(self, root, watcher, settings, on_mixer_change, on_monitor_change, current_device):
+    def __init__(self, root, watcher, settings, on_mixer_change, on_monitor_change, current_device,
+                 mic=None, on_mic_change=None):
         super().__init__(root)
         self.root = root
         self.watcher = watcher
@@ -27,6 +40,8 @@ class SettingsDialog(ctk.CTkToplevel):
         self.on_mixer_change = on_mixer_change
         self.on_monitor_change = on_monitor_change
         self.current_device = current_device
+        self.mic = mic
+        self.on_mic_change = on_mic_change
         self._palette = None
 
         self.overrideredirect(True)
@@ -58,6 +73,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self._build_mixer_tab(tabs.add("🎛️ Mixer"))
         self._build_monitor_tab(tabs.add("🖥️ Monitor"))
+        self._build_mic_tab(tabs.add("🎙️ Mikrofon"))
 
         # Tippen irgendwo im Dialog schließt eine offene Farbauswahl
         self.bind("<Button-1>", self._close_palette_on_outside_click, add="+")
@@ -190,6 +206,81 @@ class SettingsDialog(ctk.CTkToplevel):
         if any(event.widget is b or str(event.widget).startswith(str(b)) for b in self.color_buttons.values()):
             return
         self._close_palette()
+
+    # ------------------------------------------------------------------------------------------------
+    # Reiter Mikrofon
+    # ------------------------------------------------------------------------------------------------
+
+    def _build_mic_tab(self, tab):
+        if self.mic is None:
+            ctk.CTkLabel(tab, text="Mikrofon-Überwachung nicht verfügbar.", font=("Helvetica", 12, "bold"),
+                         text_color=COLORS["muted_text"]).pack(pady=20)
+            return
+        mic_settings = self.mic.settings
+
+        self.beep_switch = ctk.CTkSwitch(tab, text="Piepen, wenn ich zu laut bin", font=("Helvetica", 13, "bold"),
+                                         text_color=COLORS["text"], progress_color=COLORS["good"],
+                                         switch_width=46, switch_height=24, command=self._toggle_beep)
+        self.beep_switch.pack(anchor="w", padx=8, pady=(10, 14))
+        if mic_settings.get("beep", True):
+            self.beep_switch.select()
+
+        row = ctk.CTkFrame(tab, fg_color="transparent")
+        row.pack(fill="x", padx=8)
+        ctk.CTkLabel(row, text="Schwellwert", font=("Helvetica", 13, "bold"), text_color=COLORS["text"]).pack(side="left")
+        self.lbl_threshold = ctk.CTkLabel(row, text="", font=("Helvetica", 13, "bold"), text_color=COLORS["danger"])
+        self.lbl_threshold.pack(side="right")
+
+        # Regler und Pegelanzeige haben dieselbe Breite und Skala (-60 bis 0 dB): der Regler steht genau über der Grenze
+        self.threshold_slider = ctk.CTkSlider(tab, from_=MIN_DB, to=0, number_of_steps=int(-MIN_DB), height=22,
+                                              button_color=COLORS["danger"], button_hover_color="#FF6B6B",
+                                              progress_color=COLORS["border"], fg_color=COLORS["border"],
+                                              command=self._threshold_moved)
+        self.threshold_slider.set(mic_settings["threshold_db"])
+        self.threshold_slider.pack(fill="x", padx=8, pady=(4, 2))
+        # Gespeichert wird erst beim Loslassen, nicht bei jedem Zwischenwert
+        self.threshold_slider.bind("<ButtonRelease-1>", lambda e: self.on_mic_change and self.on_mic_change())
+
+        self.mic_meter = LevelMeter(tab, orientation="horizontal", bg=COLORS["bg"], threshold_marker=True)
+        self.mic_meter.configure(height=26)
+        self.mic_meter.pack(fill="x", padx=14, pady=(2, 2))
+
+        scale = ctk.CTkFrame(tab, fg_color="transparent")
+        scale.pack(fill="x", padx=14)
+        for text, side in (("-60 dB", "left"), ("0 dB", "right")):
+            ctk.CTkLabel(scale, text=text, font=("Helvetica", 10, "bold"), text_color=COLORS["muted_text"],
+                         height=14).pack(side=side)
+        self.lbl_mic_level = ctk.CTkLabel(scale, text="", font=("Helvetica", 12, "bold"), text_color=COLORS["text"], height=14)
+        self.lbl_mic_level.pack()
+
+        ctk.CTkButton(tab, text="🔔 Test-Piep", height=34, font=("Helvetica", 13, "bold"), fg_color=COLORS["card"],
+                      hover_color=COLORS["card_hover"], text_color=COLORS["text"],
+                      command=self.mic.play_beep).pack(anchor="w", padx=8, pady=(16, 8))
+
+        self.lbl_mic_status = ctk.CTkLabel(tab, text="", font=("Helvetica", 11, "bold"), text_color=COLORS["warn"],
+                                           wraplength=480, justify="left", anchor="w")
+        self.lbl_mic_status.pack(fill="x", padx=8)
+
+        self._threshold_moved(mic_settings["threshold_db"])
+        self._update_mic_meter()
+
+    def _toggle_beep(self):
+        self.mic.set_beep_enabled(bool(self.beep_switch.get()))
+        if self.on_mic_change:
+            self.on_mic_change()
+
+    def _threshold_moved(self, value):
+        self.mic.set_threshold(round(value))
+        self.lbl_threshold.configure(text=f"{round(value)} dB")
+
+    def _update_mic_meter(self):
+        if not self.winfo_exists():
+            return
+        level = self.mic.level_db()
+        self.mic_meter.set_level(level, *mic_zones(self.mic.settings["threshold_db"]))
+        self.lbl_mic_level.configure(text=f"jetzt {format_db(self.mic_meter.shown_db)}")
+        self.lbl_mic_status.configure(text=MIC_STATUS_TEXT.get(self.mic.status(), ""))
+        self.after(MIC_METER_MS, self._update_mic_meter)
 
     # ------------------------------------------------------------------------------------------------
     # Reiter Monitor
