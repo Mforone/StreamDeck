@@ -6,12 +6,17 @@ import tkinter as tk
 # Das Control Panel läuft auf einem eigenen Bildschirm und soll niemandem den Fokus klauen:
 # 1. Das Hauptfenster bekommt WS_EX_NOACTIVATE. Klicks kommen an, aber das Fenster,
 #    das vorher im Fokus war (z. B. ein Spiel), bleibt im Fokus.
-# 2. Nach einem Linksklick springt die Maus dorthin zurück, wo sie vor dem Wechsel aufs Panel war.
+# 2. Nach einem Tippen per Touch springt die Maus dorthin zurück, wo sie vor dem Wechsel aufs Panel war.
+#    Klicks mit der echten Maus (zum Einstellen) lösen keinen Rücksprung aus.
 # 3. Falls das Panel trotzdem den Fokus bekommt, geht er an das vorherige Fenster zurück.
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_APPWINDOW = 0x00040000  # Taskleisten-Eintrag behalten
+
+# Windows markiert Maus-Nachrichten, die aus Touch- oder Stift-Eingaben entstehen, mit dieser Signatur
+MI_WP_SIGNATURE = 0xFF515700
+SIGNATURE_MASK = 0xFFFFFF00
 
 TRACK_INTERVAL_MS = 100
 RESTORE_DELAY_MS = 120
@@ -48,6 +53,8 @@ def _load_user32():
     user32.SetCursorPos.restype = ctypes.c_int
     user32.GetWindowRect.argtypes = [hwnd, ctypes.POINTER(_RECT)]
     user32.GetWindowRect.restype = ctypes.c_int
+    user32.GetMessageExtraInfo.argtypes = []
+    user32.GetMessageExtraInfo.restype = ctypes.c_ssize_t
     return user32
 
 
@@ -59,6 +66,8 @@ class FocusKeeper:
         self.last_foreground = None
         self.last_cursor = None
         self._previous_sample = None
+        self._previous_inside = False
+        self._touch_click = False
         self._style_reported = False
 
         if sys.platform != "win32":
@@ -78,6 +87,7 @@ class FocusKeeper:
             return
 
         self._ensure_style()
+        self.root.bind_all("<ButtonPress-1>", self._on_press, add="+")
         self.root.bind_all("<ButtonRelease-1>", self._on_release, add="+")
         self._track()
 
@@ -117,6 +127,7 @@ class FocusKeeper:
                 if not inside and sample == self._previous_sample:
                     self.last_cursor = sample
                 self._previous_sample = sample
+                self._previous_inside = inside
 
             self._ensure_style()
         except Exception as e:
@@ -124,7 +135,23 @@ class FocusKeeper:
 
         self.root.after(TRACK_INTERVAL_MS, self._track)
 
+    def _on_press(self, event):
+        """Entscheidet beim Drücken, ob der Klick vom Touchscreen oder von der Maus kommt."""
+        # Weg 1: Windows-Signatur an der Nachricht (muss direkt hier abgefragt werden, nicht später)
+        extra = self.user32.GetMessageExtraInfo() & 0xFFFFFFFF
+        signed_touch = (extra & SIGNATURE_MASK) == MI_WP_SIGNATURE
+
+        # Weg 2: Beim Tippen springt der Zeiger von außen direkt aufs Panel. Eine Maus
+        # dagegen war vor dem Klick schon mindestens eine Messung lang über dem Panel.
+        jumped_in = self._previous_sample is not None and not self._previous_inside
+
+        self._touch_click = signed_touch or jumped_in
+        print(f"Fokus-Schutz: Klick per {'Touch' if self._touch_click else 'Maus'} (Signatur={signed_touch}, von außen={jumped_in})")
+
     def _on_release(self, event):
+        # Mit der Maus wird eingestellt: dann bleibt alles, wie es ist
+        if not self._touch_click:
+            return
         # Klicks in Popups und Dialogen zählen mit: nach der Auswahl/dem Speichern ist das Popup zu
         self.root.after(RESTORE_DELAY_MS, self._restore)
 

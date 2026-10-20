@@ -6,7 +6,7 @@ Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Co
 
 - **App-Knöpfe** (linke Leiste): starten Programme oder öffnen Webseiten, mit eigenem Namen, Icon und Farben. Bearbeiten und Löschen über das Knopf-Menü, neue Knöpfe über „+ App-Button“.
 - **Audio-Mixer** (Mitte): Lautstärke und Stummschaltung für das ganze System und für jede Anwendung, die gerade Ton ausgibt.
-- **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Klick springt die Maus dorthin zurück, wo sie vorher war. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
+- **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Tippen auf dem Touchscreen springt die Maus dorthin zurück, wo sie vorher war. Mit der echten Maus lässt sich das Panel ganz normal bedienen und einstellen. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
 - **Rechte Leiste**: Platz für Mediaplayer und Systemmonitor (in Arbeit).
 
 ## Voraussetzungen
