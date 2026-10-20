@@ -66,6 +66,7 @@ class AudioAppWatcher:
         self._ready = False         # erst nach der ersten Abfrage ist _running aussagekräftig
         self._last_save = time.time()
         self._dirty = False
+        self._reported = set()
 
         if start_thread:
             threading.Thread(target=self._run, daemon=True).start()
@@ -109,12 +110,12 @@ class AudioAppWatcher:
                 if is_new:
                     print(f"Mixer: neue App mit Ton gemerkt: {', '.join(sorted(heard))}")
             except Exception as e:
-                print(f"Mixer: Fehler beim Beobachten der Audio-Apps: {e}")
+                self._report_once(f"Fehler beim Beobachten der Audio-Apps: {e}")
             time.sleep(WATCH_INTERVAL_S)
 
     def _scan(self):
-        import comtypes
-        from pycaw.pycaw import AudioUtilities
+        # Pegelmesser direkt aus pycaw (comtypes.gen.AudioControlLib gibt es nicht, damit schlug es immer still fehl)
+        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
 
         running, heard = set(), set()
         for session in AudioUtilities.GetAllSessions():
@@ -132,9 +133,14 @@ class AudioAppWatcher:
             running.add(process_name.lower())
 
             try:
-                meter = session._ctl.QueryInterface(comtypes.gen.AudioControlLib.IAudioMeterInformation)
+                meter = session._ctl.QueryInterface(IAudioMeterInformation)
                 if meter.GetPeakValue() >= AUDIBLE_PEAK:
                     heard.add(process_name)
-            except Exception:
-                pass
+            except Exception as e:
+                self._report_once(f"Pegel von {process_name} nicht lesbar: {e}")
         return running, heard
+
+    def _report_once(self, message):
+        if message not in self._reported:
+            self._reported.add(message)
+            print(f"Mixer: {message}")

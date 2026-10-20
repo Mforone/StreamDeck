@@ -72,6 +72,29 @@ def list_monitors():
     return number_monitors(found)
 
 
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+
+
+def place_window(hwnd, monitor):
+    """Legt ein Fenster direkt über Windows exakt auf die Fläche eines Monitors.
+
+    Gibt die Lage zurück, die das Fenster danach wirklich hat (links, oben, rechts, unten), zum Prüfen im Log.
+    """
+    if sys.platform != "win32":
+        return None
+    user32 = ctypes.windll.user32
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.SetWindowPos(hwnd, None, monitor["x"], monitor["y"], monitor["width"], monitor["height"],
+                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
 def number_monitors(monitors):
     """Sortiert von links nach rechts (bei gleicher Spalte oben zuerst) und nummeriert ab 1."""
     ordered = sorted(monitors, key=lambda m: (m["x"], m["y"]))

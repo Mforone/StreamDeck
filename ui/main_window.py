@@ -8,7 +8,7 @@ from ui.system_monitor import SystemMonitorPanel
 from ui.media_player import MediaPlayerPanel
 from core.window_focus import FocusKeeper
 from core.audio_apps import AudioAppWatcher
-from core.monitors import choose_monitor, list_monitors, monitor_settings
+from core.monitors import choose_monitor, list_monitors, monitor_settings, place_window
 from ui.settings_dialog import SettingsDialog
 
 # DPI-Skalierungsfehler unter Windows beheben (MUSS VOR CTK-INIT SEIN ODER AM ANFANG DER INIT)
@@ -39,6 +39,10 @@ class ControlPanelApp(ctk.CTk):
         print(f"Monitor {self.monitor['device'] if self.monitor else '?'}: {screen_width} {screen_height} bei {screen_x},{screen_y}")
         self.geometry(f"{screen_width}x{screen_height}+{screen_x}+{screen_y}")
         self.attributes("-fullscreen", True) # Fullscreen (auf dem Monitor, auf dem das Fenster gerade liegt)
+        # customtkinter versteckt das Fenster beim Start kurz und zeigt es neu an, dabei geht die Position verloren.
+        # Deshalb erst, wenn es sicher sichtbar ist, direkt über Windows auf den Monitor legen.
+        if self.monitor:
+            self.after(800, lambda: self.place_on_monitor(self.monitor))
         self.bind("<Escape>", lambda event: self.destroy()) # Mit ESC schließen
 
         # Farbliches Aussehen
@@ -294,14 +298,15 @@ class ControlPanelApp(ctk.CTk):
         self.config_data.setdefault("settings", {})["monitor"] = monitor_settings(monitor)
         save_config(self.config_data)
 
-        # Vollbild kurz aus, Fenster auf den Ziel-Monitor schieben, Vollbild wieder an.
-        # Nur die Position setzen: Breite/Höhe würde customtkinter mit der Skalierung umrechnen.
-        self.attributes("-fullscreen", False)
-        self.geometry(f"+{monitor['x']}+{monitor['y']}")
-        self.update_idletasks()
-        self.attributes("-fullscreen", True)
+        self.place_on_monitor(monitor)
         self.button_frame.configure(height=monitor["height"] - 122)
-        print(f"Monitor gewechselt: {monitor['device']} {monitor['width']}x{monitor['height']}")
+
+    def place_on_monitor(self, monitor):
+        # wm_frame() liefert das äußere Windows-Fenster; immer frisch holen, Tk erzeugt es beim Vollbild manchmal neu
+        hwnd = int(self.wm_frame(), 16)
+        rect = place_window(hwnd, monitor)
+        print(f"Monitor {monitor['device']}: Ziel {monitor['x']},{monitor['y']} {monitor['width']}x{monitor['height']}, "
+              f"Fenster liegt bei {rect}")
 
     def add_empty_button_row(self):
         """Erstellt zwei neue Platzhalter-Buttons, speichert sie in der config.json und lädt die UI neu."""

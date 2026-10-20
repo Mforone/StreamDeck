@@ -114,6 +114,8 @@ class FocusKeeper:
     def _track(self):
         """Merkt sich laufend das letzte fremde Fenster im Fokus und die letzte Mausposition außerhalb des Panels."""
         try:
+            # Tk erzeugt das äußere Fenster beim Umschalten des Vollbilds manchmal neu: Handle aktuell halten
+            self.hwnd = int(self.root.wm_frame(), 16)
             foreground = self.user32.GetForegroundWindow()
             if foreground and not self._is_own_window(foreground):
                 self.last_foreground = foreground
