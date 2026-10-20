@@ -278,7 +278,8 @@ class MediaSession:
             self._track_key = track_key
             self._cover_retry_at = now + COVER_RETRY_DELAY_S
             print(f"Mediaplayer: {app_id!r} | {title} | Dauer {duration:.0f}s | "
-                  f"spulen={update['can_seek']} shuffle={update['can_shuffle']} wiederholen={update['can_repeat']}")
+                  f"zurück={update['can_previous']} weiter={update['can_next']} spulen={update['can_seek']} "
+                  f"shuffle={update['can_shuffle']} wiederholen={update['can_repeat']}")
             await self._load_cover(props, track_key)
         elif self._cover_retry_at is not None and now >= self._cover_retry_at:
             self._cover_retry_at = None

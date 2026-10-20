@@ -5,7 +5,16 @@ from config import COLORS
 from core.media_session import MediaSession, REPEAT_CYCLE, current_position, format_time
 
 REFRESH_MS = 250
-COVER_PX = 76
+COVER_PX = 80
+
+# Schriftgrößen (Punkte, customtkinter skaliert sie mit der Windows-Skalierung)
+TITLE_SIZE = 15
+ARTIST_SIZE = 13
+APP_SIZE = 11
+TIME_SIZE = 13
+
+# Weniger als so viele Sekunden vor dem Ende springt "Weiter" nicht mehr ans Ende
+END_JUMP_MARGIN_S = 1.0
 
 # Symbole aus der Windows-Symbolschrift (Win11: Segoe Fluent Icons, Win10: Segoe MDL2 Assets)
 ICON_FONTS = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
@@ -92,15 +101,15 @@ class MediaPlayerPanel(ctk.CTkFrame):
         self.text_box = ctk.CTkFrame(top, fg_color="transparent")
         self.text_box.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
 
-        self.title_font = ("Helvetica", 13, "bold")
-        self.artist_font = ("Helvetica", 11)
+        self.title_font = ("Helvetica", TITLE_SIZE, "bold")
+        self.artist_font = ("Helvetica", ARTIST_SIZE, "bold")
         self.lbl_title = ctk.CTkLabel(self.text_box, text="", font=self.title_font,
                                       text_color=COLORS["text"], anchor="w")
         self.lbl_title.pack(fill="x", pady=(4, 0))
         self.lbl_artist = ctk.CTkLabel(self.text_box, text="", font=self.artist_font,
                                        text_color=COLORS["muted_text"], anchor="w")
         self.lbl_artist.pack(fill="x")
-        self.lbl_app = ctk.CTkLabel(self.text_box, text="", font=("Helvetica", 9),
+        self.lbl_app = ctk.CTkLabel(self.text_box, text="", font=("Helvetica", APP_SIZE, "bold"),
                                     text_color=COLORS["muted_text"], anchor="w")
         self.lbl_app.pack(fill="x")
 
@@ -127,11 +136,11 @@ class MediaPlayerPanel(ctk.CTkFrame):
         times = ctk.CTkFrame(parent, fg_color="transparent")
         times.pack(fill="x")
         # Feste Breite, damit die Zeile beim Hochzählen nicht wackelt
-        self.lbl_position = ctk.CTkLabel(times, text="0:00", width=44, anchor="w",
-                                         font=("Helvetica", 10), text_color=COLORS["muted_text"])
+        self.lbl_position = ctk.CTkLabel(times, text="0:00", width=64, anchor="w",
+                                         font=("Helvetica", TIME_SIZE, "bold"), text_color=COLORS["text"])
         self.lbl_position.pack(side="left")
-        self.lbl_duration = ctk.CTkLabel(times, text="0:00", width=44, anchor="e",
-                                         font=("Helvetica", 10), text_color=COLORS["muted_text"])
+        self.lbl_duration = ctk.CTkLabel(times, text="0:00", width=64, anchor="e",
+                                         font=("Helvetica", TIME_SIZE, "bold"), text_color=COLORS["text"])
         self.lbl_duration.pack(side="right")
 
     def _build_controls(self, parent):
@@ -158,9 +167,9 @@ class MediaPlayerPanel(ctk.CTkFrame):
             return button
 
         self.btn_shuffle = icon_button(0, "shuffle", self._on_shuffle)
-        self.btn_previous = icon_button(1, "previous", lambda: self._send("previous"))
+        self.btn_previous = icon_button(1, "previous", self._on_previous)
         self.btn_play = icon_button(2, "play", self._on_play_pause, size=18, big=True)
-        self.btn_next = icon_button(3, "next", lambda: self._send("next"))
+        self.btn_next = icon_button(3, "next", self._on_next)
         self.btn_repeat = icon_button(4, "repeat_list", self._on_repeat)
 
     # ------------------------------------------------------------------------------------------------
@@ -180,6 +189,31 @@ class MediaPlayerPanel(ctk.CTkFrame):
                                  base_position=current_position(state), base_time=time.monotonic())
         self._send("play_pause")
         self.refresh(reschedule=False)
+
+    def _seek_to(self, seconds):
+        self.session.patch_state(base_position=seconds, base_time=time.monotonic())
+        self._send("seek", seconds)
+        self.refresh(reschedule=False)
+
+    def _on_previous(self):
+        state = self.state
+        if not state:
+            return
+        if state["can_previous"]:
+            self._send("previous")
+        elif state["can_seek"]:
+            # App bietet kein "Zurück" an (z. B. einzelnes YouTube-Video): an den Anfang
+            self._seek_to(0)
+
+    def _on_next(self):
+        state = self.state
+        if not state:
+            return
+        if state["can_next"]:
+            self._send("next")
+        elif state["can_seek"] and state["duration"] > END_JUMP_MARGIN_S:
+            # App bietet kein "Weiter" an: ans Ende springen, bei YouTube startet dann Autoplay das nächste Video
+            self._seek_to(state["duration"] - END_JUMP_MARGIN_S)
 
     def _on_shuffle(self):
         state = self.state
@@ -255,10 +289,12 @@ class MediaPlayerPanel(ctk.CTkFrame):
 
         def apply(values):
             scaling = ctk.ScalingTracker.get_widget_scaling(self)
-            title_font = ("Helvetica", -round(13 * scaling), "bold")
-            artist_font = ("Helvetica", -round(11 * scaling))
-            self.lbl_title.configure(text=fit_text(values[0], title_font, values[3]))
-            self.lbl_artist.configure(text=fit_text(values[1], artist_font, values[3]))
+            title_font = ("Helvetica", -round(TITLE_SIZE * scaling), "bold")
+            artist_font = ("Helvetica", -round(ARTIST_SIZE * scaling), "bold")
+            # Etwas Luft lassen: das Textfeld im Label hat eigene Innenabstände
+            room = values[3] - round(12 * scaling)
+            self.lbl_title.configure(text=fit_text(values[0], title_font, room))
+            self.lbl_artist.configure(text=fit_text(values[1], artist_font, room))
             self.lbl_app.configure(text=values[2])
 
         self._set_once("texts", (title, artist, app, width), apply)
@@ -307,8 +343,11 @@ class MediaPlayerPanel(ctk.CTkFrame):
         self._set_once("play_icon", "pause" if state["playing"] else "play",
                        lambda icon: self.btn_play.configure(text=self.icons[icon]))
         self._set_once("can_play", active and state["can_play_pause"], lambda on: enable(self.btn_play, on))
-        self._set_once("can_previous", active and state["can_previous"], lambda on: enable(self.btn_previous, on))
-        self._set_once("can_next", active and state["can_next"], lambda on: enable(self.btn_next, on))
+        # Ohne eigenes Zurück/Weiter der App gehen die Knöpfe trotzdem, solange gespult werden kann
+        self._set_once("can_previous", active and (state["can_previous"] or state["can_seek"]),
+                       lambda on: enable(self.btn_previous, on))
+        self._set_once("can_next", active and (state["can_next"] or state["can_seek"]),
+                       lambda on: enable(self.btn_next, on))
 
         # Shuffle/Wiederholen: grün = an, grau = aus, ausgegraut = von der App nicht unterstützt
         shuffle_on = bool(state["shuffle"])
