@@ -6,6 +6,7 @@ Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Co
 
 - **App-Knöpfe** (linke Leiste): starten Programme oder öffnen Webseiten, mit eigenem Namen, Icon und Farben. Bearbeiten und Löschen über das Knopf-Menü, neue Knöpfe über „+ App-Button“.
 - **Audio-Mixer** (Mitte): Lautstärke und Stummschaltung für das ganze System und für jede Anwendung, die gerade Ton ausgibt.
+- **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Klick springt die Maus dorthin zurück, wo sie vorher war. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
 - **Rechte Leiste**: Platz für Mediaplayer und Systemmonitor (in Arbeit).
 
 ## Voraussetzungen
@@ -24,7 +25,7 @@ python main.py
 
 Danach reicht ein Doppelklick auf `start.bat`: Sie holt per `git pull` den neuesten Stand, installiert fehlende Pakete und startet die App.
 
-Die App startet im Vollbild, `Esc` beendet sie.
+Die App startet im Vollbild, das ✕ oben links beendet sie.
 
 ## Konfiguration
 
@@ -37,6 +38,7 @@ Alle Knöpfe stehen in `data/config.json`. Die Datei wird beim ersten Start mit 
 | `main.py` | Einstiegspunkt |
 | `config.py` | Farbschema |
 | `core/config_manager.py` | Laden und Speichern von `data/config.json` |
+| `core/window_focus.py` | Fokus-Schutz und Maus-Rücksprung (Windows-API) |
 | `core/audio_manager.py` | Lautstärke und Stummschaltung über pycaw |
 | `ui/main_window.py` | Hauptfenster und Layout |
 | `ui/StreamDeckFunktion.py` | App-Knöpfe und ihre Aktionen |

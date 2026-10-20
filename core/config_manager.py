@@ -8,7 +8,8 @@ CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 # Standard-Einstellungen, falls keine JSON existiert
 DEFAULT_CONFIG = {
     "settings": {
-        "mixer_accent_color": "#1E2040"
+        "mixer_accent_color": "#1E2040",
+        "return_cursor": True
     },
     "buttons": [
         {

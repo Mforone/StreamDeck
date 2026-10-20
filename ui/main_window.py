@@ -4,6 +4,7 @@ import ctypes
 from ui.StreamDeckFunktion import *
 from core.config_manager import save_config
 from ui.audio_mixer import AudioMixerPanel
+from core.window_focus import FocusKeeper
 
 # DPI-Skalierungsfehler unter Windows beheben (MUSS VOR CTK-INIT SEIN ODER AM ANFANG DER INIT)
 try:
@@ -218,6 +219,21 @@ class ControlPanelApp(ctk.CTk):
         )
         self.subtitle_label.pack(fill="x", padx=15, pady=(0, 10))
 
+        # Schließen-Knopf (ESC greift nicht, weil das Fenster nie den Tastatur-Fokus bekommt)
+        self.close_button = ctk.CTkButton(
+            self.name_frame,
+            text="✕",
+            font=("Helvetica", 14, "bold"),
+            width=28,
+            height=28,
+            fg_color="transparent",
+            hover_color=COLORS["danger"],
+            text_color=COLORS["muted_text"],
+            corner_radius=6,
+            command=self.destroy
+        )
+        self.close_button.place(relx=1.0, x=-8, y=10, anchor="ne")
+
         # ========================================================================================================
         # Buttons
         # ========================================================================================================
@@ -233,6 +249,10 @@ class ControlPanelApp(ctk.CTk):
             command=self.add_empty_button_row  # Funktion, die beim Klick ausgeführt wird
         )
         self.add_app_button.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Fokus beim vorherigen Fenster lassen und Maus nach dem Klick zurücksetzen
+        settings = self.config_data.get("settings", {})
+        self.focus_keeper = FocusKeeper(self, return_cursor=settings.get("return_cursor", True))
 
     # ========================================================================================================
     # Funktionen

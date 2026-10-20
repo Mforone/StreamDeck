@@ -288,4 +288,15 @@ class AppButtonRow(ctk.CTkFrame):
         btn_delete.pack(fill="x", padx=4, pady=(2, 5))
 
         popup.bind("<FocusOut>", lambda e: popup.after(1000, lambda: popup.destroy() if popup.winfo_exists() else None))
+
+        # Klick ins Hauptfenster schließt das Menü (FocusOut kommt nicht, weil das Hauptfenster nie aktiv wird)
+        def on_global_click(event):
+            if popup.winfo_exists():
+                px, py = popup.winfo_rootx(), popup.winfo_rooty()
+                pw, ph = popup.winfo_width(), popup.winfo_height()
+                if not (px <= event.x_root <= px + pw and py <= event.y_root <= py + ph):
+                    popup.after(50, lambda: popup.destroy() if popup.winfo_exists() else None)
+            root.unbind("<Button-1>", click_binding)
+
+        click_binding = root.bind("<Button-1>", on_global_click, add="+")
         popup.focus_force()
