@@ -9,6 +9,7 @@ from ui.media_player import MediaPlayerPanel
 from core.window_focus import FocusKeeper
 from core.audio_apps import AudioAppWatcher
 from core.mic_monitor import MicMonitor
+from core import soundboard
 from core.monitors import choose_monitor, list_monitors, monitor_settings, place_window
 from ui.settings_dialog import SettingsDialog
 
@@ -179,6 +180,8 @@ class ControlPanelApp(ctk.CTk):
         # Merkt sich im Hintergrund, welche Apps laufen und welche je Ton abgegeben haben
         self.audio_watcher = AudioAppWatcher()
         # Mikrofon-Überwachung (Pegel für Kanal 8 und Piepen bei Überschreiten des Schwellwerts)
+        # Soundboard: Knöpfe spielen Sounds im Discord-Call (über das virtuelle Kabel) und bei einem selbst
+        soundboard.instance = soundboard.Soundboard(self.config_data["settings"].setdefault("soundboard", {}))
         self.mic_monitor = MicMonitor(self.config_data.setdefault("settings", {}).setdefault("mic", {}),
                                       audio=self.audio_watcher)
         channel_settings = self.config_data.setdefault("settings", {}).setdefault("mixer_channels", {})
@@ -294,7 +297,8 @@ class ControlPanelApp(ctk.CTk):
                        on_mixer_change=self.on_mixer_settings_changed,
                        on_monitor_change=self.move_to_monitor,
                        current_device=self.monitor["device"] if self.monitor else None,
-                       mic=self.mic_monitor, on_mic_change=lambda: save_config(self.config_data))
+                       mic=self.mic_monitor, on_mic_change=lambda: save_config(self.config_data),
+                       soundboard=soundboard.instance, on_soundboard_change=lambda: save_config(self.config_data))
 
     def on_mixer_settings_changed(self):
         save_config(self.config_data)

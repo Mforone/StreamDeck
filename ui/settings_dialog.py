@@ -1,4 +1,5 @@
 import tkinter as tk
+import webbrowser
 from tkinter import colorchooser
 import customtkinter as ctk
 from config import COLORS
@@ -32,7 +33,7 @@ class SettingsDialog(ctk.CTkToplevel):
     """Einstellungen mit zwei Reitern: Mixer-Kanäle und Monitor."""
 
     def __init__(self, root, watcher, settings, on_mixer_change, on_monitor_change, current_device,
-                 mic=None, on_mic_change=None):
+                 mic=None, on_mic_change=None, soundboard=None, on_soundboard_change=None):
         super().__init__(root)
         self.root = root
         self.watcher = watcher
@@ -42,6 +43,8 @@ class SettingsDialog(ctk.CTkToplevel):
         self.current_device = current_device
         self.mic = mic
         self.on_mic_change = on_mic_change
+        self.soundboard = soundboard
+        self.on_soundboard_change = on_soundboard_change
         self._palette = None
 
         self.overrideredirect(True)
@@ -74,6 +77,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self._build_mixer_tab(tabs.add("🎛️ Mixer"))
         self._build_monitor_tab(tabs.add("🖥️ Monitor"))
         self._build_mic_tab(tabs.add("🎙️ Mikrofon"))
+        self._build_soundboard_tab(tabs.add("🔊 Soundboard"))
 
         # Tippen irgendwo im Dialog schließt eine offene Farbauswahl
         self.bind("<Button-1>", self._close_palette_on_outside_click, add="+")
@@ -330,6 +334,119 @@ class SettingsDialog(ctk.CTkToplevel):
         self.lbl_mic_status.configure(text=MIC_STATUS_TEXT.get(self.mic.status(), ""))
         self._refresh_mic_devices()
         self.after(MIC_METER_MS, self._update_mic_meter)
+
+    # ------------------------------------------------------------------------------------------------
+    # Reiter Soundboard
+    # ------------------------------------------------------------------------------------------------
+
+    def _option_menu(self, parent, command):
+        return ctk.CTkOptionMenu(
+            parent, values=["…"], height=34, font=("Helvetica", 12, "bold"), dropdown_font=("Helvetica", 12),
+            fg_color=COLORS["bg"], button_color=COLORS["bg"], button_hover_color=COLORS["card_hover"],
+            dropdown_fg_color=COLORS["card"], dropdown_hover_color=COLORS["card_hover"], text_color=COLORS["text"],
+            dynamic_resizing=False, command=command)
+
+    def _build_soundboard_tab(self, tab):
+        if self.soundboard is None:
+            ctk.CTkLabel(tab, text="Soundboard nicht verfügbar.", font=("Helvetica", 12, "bold"),
+                         text_color=COLORS["muted_text"]).pack(pady=20)
+            return
+        sb = self.soundboard.settings
+
+        # Zustand des virtuellen Kabels (VB-Audio Virtual Cable)
+        self.lbl_cable = ctk.CTkLabel(tab, text="", font=("Helvetica", 13, "bold"), anchor="w", justify="left",
+                                      wraplength=480)
+        self.lbl_cable.pack(fill="x", padx=8, pady=(10, 2))
+        self.btn_cable_page = ctk.CTkButton(tab, text="VB-Cable-Downloadseite öffnen", height=30,
+                                            font=("Helvetica", 12, "bold"), fg_color=COLORS["card"],
+                                            hover_color=COLORS["card_hover"], text_color=COLORS["text"],
+                                            command=lambda: webbrowser.open("https://vb-audio.com/Cable/"))
+
+        grid = ctk.CTkFrame(tab, fg_color="transparent")
+        grid.pack(fill="x", padx=8, pady=(10, 0))
+        grid.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(grid, text="Für den Call", font=("Helvetica", 13, "bold"),
+                     text_color=COLORS["text"]).grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        self.menu_call = self._option_menu(grid, lambda v: self._set_sound_device("call_device", v))
+        self.menu_call.grid(row=0, column=1, sticky="ew", pady=4)
+
+        self.switch_local = ctk.CTkSwitch(grid, text="Bei mir", font=("Helvetica", 13, "bold"),
+                                          text_color=COLORS["text"], progress_color=COLORS["good"],
+                                          command=self._toggle_local)
+        self.switch_local.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
+        if sb.get("local", True):
+            self.switch_local.select()
+        self.menu_local = self._option_menu(grid, lambda v: self._set_sound_device("local_device", v))
+        self.menu_local.grid(row=1, column=1, sticky="ew", pady=4)
+        ctk.CTkButton(grid, text="⟳", width=34, height=34, font=("Helvetica", 16, "bold"), fg_color=COLORS["bg"],
+                      hover_color=COLORS["card_hover"], text_color=COLORS["text"],
+                      command=self._refresh_sound_devices).grid(row=0, column=2, rowspan=2, padx=(6, 0))
+
+        row = ctk.CTkFrame(tab, fg_color="transparent")
+        row.pack(fill="x", padx=8, pady=(12, 0))
+        ctk.CTkLabel(row, text="Lautstärke aller Sounds", font=("Helvetica", 13, "bold"),
+                     text_color=COLORS["text"]).pack(side="left")
+        self.lbl_sb_volume = ctk.CTkLabel(row, text="", font=("Helvetica", 13, "bold"), text_color=COLORS["text"])
+        self.lbl_sb_volume.pack(side="right")
+        self.slider_sb_volume = ctk.CTkSlider(tab, from_=0, to=1.5, number_of_steps=30, height=22,
+                                              button_color=COLORS["accent"], button_hover_color=COLORS["accent_hover"],
+                                              progress_color=COLORS["accent"], command=self._sb_volume_moved)
+        self.slider_sb_volume.set(sb.get("volume", 1.0))
+        self.slider_sb_volume.pack(fill="x", padx=8, pady=(4, 0))
+        self.slider_sb_volume.bind("<ButtonRelease-1>", lambda e: self._soundboard_changed())
+        self._sb_volume_moved(sb.get("volume", 1.0))
+
+        ctk.CTkButton(tab, text="⏹ Alle Sounds stoppen", height=36, font=("Helvetica", 13, "bold"),
+                      fg_color=COLORS["danger"], hover_color="#FF6B6B", text_color="#FFFFFF",
+                      command=self.soundboard.stop_all).pack(anchor="w", padx=8, pady=(16, 0))
+
+        self._refresh_sound_devices()
+
+    def _refresh_sound_devices(self):
+        self.soundboard.refresh_devices()
+        outputs, default, cable, _ = self.soundboard.devices()
+        sb = self.soundboard.settings
+
+        self._call_labels = {f"Automatisch ({cable})" if cable else "Automatisch (kein Kabel gefunden)": ""}
+        self._call_labels.update({name: name for name in outputs})
+        self.menu_call.configure(values=list(self._call_labels))
+        wanted = sb.get("call_device", "")
+        self.menu_call.set(wanted if wanted else next(iter(self._call_labels)))
+
+        self._local_labels = {f"Windows-Standard ({default})" if default else "Windows-Standard": ""}
+        self._local_labels.update({name: name for name in outputs})
+        self.menu_local.configure(values=list(self._local_labels))
+        wanted = sb.get("local_device", "")
+        self.menu_local.set(wanted if wanted else next(iter(self._local_labels)))
+
+        if cable or sb.get("call_device"):
+            self.lbl_cable.configure(text=f"✓ Virtuelles Kabel: {sb.get('call_device') or cable}",
+                                     text_color=COLORS["good"])
+            self.btn_cable_page.pack_forget()
+        else:
+            self.lbl_cable.configure(text="Kein virtuelles Kabel gefunden: Sounds sind nur bei dir zu hören. "
+                                          "Für den Discord-Call VB-Audio Virtual Cable installieren.",
+                                     text_color=COLORS["warn"])
+            self.btn_cable_page.pack(anchor="w", padx=8, after=self.lbl_cable)
+
+    def _set_sound_device(self, key, label):
+        labels = self._call_labels if key == "call_device" else self._local_labels
+        self.soundboard.settings[key] = labels.get(label, "")
+        self._refresh_sound_devices()
+        self._soundboard_changed()
+
+    def _toggle_local(self):
+        self.soundboard.settings["local"] = bool(self.switch_local.get())
+        self._soundboard_changed()
+
+    def _sb_volume_moved(self, value):
+        self.soundboard.settings["volume"] = round(value, 2)
+        self.lbl_sb_volume.configure(text=f"{round(value * 100)}%")
+
+    def _soundboard_changed(self):
+        if self.on_soundboard_change:
+            self.on_soundboard_change()
 
     # ------------------------------------------------------------------------------------------------
     # Reiter Monitor

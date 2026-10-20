@@ -5,11 +5,13 @@ from PIL import Image
 from config import COLORS
 from ui.window_utils import center_over
 from ui.hotkey_picker import HotkeyPicker
+from core import soundboard
 
 ACTION_LABELS = {
     "program": "Programm / App",
     "url": "Webseite (URL)",
     "hotkey": "Tastenkombination",
+    "sound": "Sound abspielen",
 }
 
 
@@ -59,6 +61,8 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.current_url = action_data.get("url", "")
         self.current_action_type = self.button_data.get("action_type", "program")
         self.current_hotkey = action_data.get("hotkey", []) or []
+        self.current_sound = action_data.get("sound_file", "") or ""
+        self.current_sound_volume = float(action_data.get("sound_volume", 1.0))
 
         self.setup_ui()
         self.update_preview()
@@ -185,6 +189,32 @@ class EditButtonDialog(ctk.CTkToplevel):
 
         # Tastenkombination: statt Eingabefeld Tasten antippen oder aufnehmen
         self.hotkey_picker = HotkeyPicker(container, keys=self.current_hotkey)
+        # Sound: Datei wählen, Lautstärke, Probehören
+        self.sound_frame = ctk.CTkFrame(container, fg_color="transparent")
+        file_row = ctk.CTkFrame(self.sound_frame, fg_color="transparent")
+        file_row.pack(fill="x")
+        self.entry_sound = ctk.CTkEntry(file_row, fg_color=COLORS["bg"], border_color=COLORS["border"],
+                                        text_color=COLORS["text"], placeholder_text="Sounddatei wählen …")
+        self.entry_sound.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        if self.current_sound:
+            self.entry_sound.insert(0, self.current_sound)
+        ctk.CTkButton(file_row, text="📁", width=35, fg_color=COLORS["bg"], hover_color=COLORS["card_hover"],
+                      command=self.browse_sound).pack(side="left", padx=(0, 5))
+        ctk.CTkButton(file_row, text="▶", width=35, fg_color=COLORS["bg"], hover_color=COLORS["card_hover"],
+                      command=self.test_sound).pack(side="left")
+        volume_row = ctk.CTkFrame(self.sound_frame, fg_color="transparent")
+        volume_row.pack(fill="x", pady=(8, 0))
+        ctk.CTkLabel(volume_row, text="Lautstärke", font=("Helvetica", 12), text_color=COLORS["text"]).pack(side="left")
+        self.lbl_sound_volume = ctk.CTkLabel(volume_row, text="", width=44, font=("Helvetica", 12, "bold"),
+                                             text_color=COLORS["text"])
+        self.lbl_sound_volume.pack(side="right")
+        self.slider_sound = ctk.CTkSlider(volume_row, from_=0, to=1.5, number_of_steps=30,
+                                          button_color=COLORS["accent"], button_hover_color=COLORS["accent_hover"],
+                                          progress_color=COLORS["accent"], command=self._sound_volume_moved)
+        self.slider_sound.pack(side="left", fill="x", expand=True, padx=8)
+        self.slider_sound.set(self.current_sound_volume)
+        self._sound_volume_moved(self.current_sound_volume)
+
         self.lbl_error = ctk.CTkLabel(container, text="", font=("Helvetica", 11, "bold"), text_color=COLORS["danger"],
                                       height=14)
 
@@ -354,7 +384,19 @@ class EditButtonDialog(ctk.CTkToplevel):
             height=30,
             command=lambda: select_option("hotkey", ACTION_LABELS["hotkey"])
         )
-        btn_opt3.pack(fill="x", padx=4, pady=(2, 4))
+        btn_opt3.pack(fill="x", padx=4, pady=(2, 2))
+
+        btn_opt4 = ctk.CTkButton(
+            menu_frame,
+            text=ACTION_LABELS["sound"],
+            anchor="w",
+            fg_color="transparent",
+            hover_color=COLORS["card_hover"],
+            text_color=COLORS["text"],
+            height=30,
+            command=lambda: select_option("sound", ACTION_LABELS["sound"])
+        )
+        btn_opt4.pack(fill="x", padx=4, pady=(2, 4))
 
         # Schließt sich automatisch, wenn der Fokus verloren geht
         popup.bind("<FocusOut>", lambda e: popup.after(200, lambda: popup.destroy() if popup.winfo_exists() else None))
@@ -417,13 +459,16 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.entry_target.delete(0, "end")
         self.lbl_error.pack_forget()
 
-        # Tastenkombination: Auswahl statt Eingabefeld an derselben Stelle zeigen
+        # Tastenkombination / Sound: eigene Auswahl statt Eingabefeld an derselben Stelle zeigen
+        self.hotkey_picker.close_popup()
+        for frame in (self.target_frame, self.hotkey_picker, self.sound_frame):
+            frame.pack_forget()
         if self.current_action_type == "hotkey":
-            self.target_frame.pack_forget()
             self.hotkey_picker.pack(fill="x", pady=(0, 15), after=self.btn_dropdown)
             return
-        self.hotkey_picker.close_popup()
-        self.hotkey_picker.pack_forget()
+        if self.current_action_type == "sound":
+            self.sound_frame.pack(fill="x", pady=(0, 15), after=self.btn_dropdown)
+            return
         self.target_frame.pack(fill="x", pady=(0, 15), after=self.btn_dropdown)
 
         if self.current_action_type == "program":
@@ -432,6 +477,23 @@ class EditButtonDialog(ctk.CTkToplevel):
         else:
             self.entry_target.insert(0, self.current_url)
             self.btn_browse_target.pack_forget()
+
+    def browse_sound(self):
+        filename = filedialog.askopenfilename(
+            parent=self,
+            title="Sound auswählen",
+            filetypes=[("Sounds", soundboard.SUPPORTED), ("Alle Dateien", "*.*")]
+        )
+        if filename:
+            self.entry_sound.delete(0, "end")
+            self.entry_sound.insert(0, filename)
+
+    def test_sound(self):
+        if soundboard.instance is not None:
+            soundboard.instance.toggle(self.entry_sound.get().strip(), self.slider_sound.get())
+
+    def _sound_volume_moved(self, value):
+        self.lbl_sound_volume.configure(text=f"{round(value * 100)}%")
 
     def browse_target_file(self):
         filename = filedialog.askopenfilename(
@@ -479,7 +541,16 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.button_data["text_color"] = self.current_text
         self.button_data["icon_path"] = self.current_icon
 
-        if self.current_action_type == "hotkey":
+        if self.current_action_type == "sound":
+            path = self.entry_sound.get().strip()
+            if not path:
+                self.lbl_error.configure(text="Bitte eine Sounddatei wählen.")
+                self.lbl_error.pack(fill="x", after=self.sound_frame)
+                return
+            self.button_data["action_type"] = "sound"
+            self.button_data["action_data"] = {"path": "", "url": "", "hotkey": [], "sound_file": path,
+                                               "sound_volume": round(self.slider_sound.get(), 2)}
+        elif self.current_action_type == "hotkey":
             keys = self.hotkey_picker.get()
             if not any(k not in ("ctrl", "shift", "alt", "win") for k in keys):
                 # Ohne Haupttaste passiert nichts: lieber Hinweis zeigen als einen wirkungslosen Knopf speichern

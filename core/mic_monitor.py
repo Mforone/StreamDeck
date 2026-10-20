@@ -205,10 +205,15 @@ class MicMonitor:
 
     def _open_stream(self):
         import sounddevice as sd
+        from core import portaudio
         # Geräteliste neu einlesen, damit ein angestecktes Headset oder ein in Windows gewechseltes
-        # Standard-Mikrofon erkannt wird
-        sd._terminate()
-        sd._initialize()
+        # Standard-Mikrofon erkannt wird (nur wenn gerade kein Sound läuft, sonst würde er abbrechen)
+        portaudio.refresh_devices()
+        with portaudio.lock():
+            return self._open_stream_locked(sd)
+
+    def _open_stream_locked(self, sd):
+        from core import portaudio
 
         # WASAPI ist Windows' moderner Audioweg: volle Gerätenamen wie in den Windows-Soundeinstellungen,
         # das Standardgerät ist das aktuelle aus Windows. Der alte Weg (MME) kürzt Namen auf 31 Zeichen.
@@ -247,6 +252,7 @@ class MicMonitor:
                                     dtype="float32", callback=self._callback)
             stream.start()
             name, api = info["name"], info["hostapi"]
+        portaudio.stream_opened()
         self._device_name = name
         self._signal_reported = False
         print(f"Mikrofon: erkannt: {', '.join(self._devices)}")
@@ -294,10 +300,13 @@ class MicMonitor:
 
     def _close(self):
         if self._stream is not None:
+            from core import portaudio
             try:
-                self._stream.close()
+                with portaudio.lock():
+                    self._stream.close()
             except Exception:
                 pass
+            portaudio.stream_closed()
             self._stream = None
             self._level_db = MIN_DB
             self._energies = []

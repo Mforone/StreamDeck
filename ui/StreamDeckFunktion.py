@@ -8,6 +8,7 @@ from ui.edit_dialog import EditButtonDialog
 from config import COLORS
 from ui.window_utils import center_over
 from core.hotkeys import send_hotkey
+from core import soundboard
 
 
 def execute_button_action(app_data):
@@ -38,6 +39,11 @@ def execute_button_action(app_data):
     elif action_type == "hotkey":
         # Geht an das Fenster, das gerade vorne ist (das Panel nimmt keinem Fenster den Fokus)
         send_hotkey(action_data.get("hotkey", []))
+
+    elif action_type == "sound":
+        # Antippen spielt, nochmal antippen stoppt; zu hören im Call und bei einem selbst
+        if soundboard.instance is not None:
+            soundboard.instance.toggle(action_data.get("sound_file", ""), action_data.get("sound_volume", 1.0))
 
 
 class AppButtonRow(ctk.CTkFrame):

@@ -5,3 +5,4 @@ winrt-Windows.Media.Control
 winrt-Windows.Storage.Streams
 sounddevice
 numpy
+soundfile
