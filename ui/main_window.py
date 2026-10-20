@@ -23,6 +23,9 @@ except Exception:
     except Exception:
         pass
 
+GAP = 10  # Abstand Warteschlange -> Uhr und Uhr -> Monitoring
+
+
 class ControlPanelApp(ctk.CTk):
     def __init__(self, config_data=None):
         super().__init__()
@@ -204,8 +207,10 @@ class ControlPanelApp(ctk.CTk):
 
         # Einteilung der rechten Seite
         # Mediaplayer oben, Systemmonitor unten, jeweils genau die Hälfte (uniform = gleich groß, egal wie viel der Inhalt will)
-        self.sidebar_r.grid_rowconfigure(0, weight=1, uniform="sidebar_r")
-        self.sidebar_r.grid_rowconfigure(1, weight=1, uniform="sidebar_r")
+        # Mediaplayer so hoch wie nötig (Warteschlange hält immer Platz für 5 Lieder, damit nichts springt),
+        # Uhr und Monitoring bekommen den ganzen Rest
+        self.sidebar_r.grid_rowconfigure(0, weight=0)
+        self.sidebar_r.grid_rowconfigure(1, weight=1)
         self.sidebar_r.grid_columnconfigure(0, weight=1)
 
         # Mediapalyer
@@ -216,7 +221,7 @@ class ControlPanelApp(ctk.CTk):
         )
         self.media_frame.grid(row=0, column=0, sticky="nsew")
         media_player = MediaPlayerPanel(self.media_frame, on_settings=self.open_settings)
-        media_player.pack(fill="both", expand=True, padx=15, pady=10)
+        media_player.pack(fill="both", expand=True, padx=15, pady=(10, 0))
 
         # Systemmonitor
         self.system_frame = ctk.CTkFrame(
@@ -225,12 +230,12 @@ class ControlPanelApp(ctk.CTk):
             corner_radius=15
         )
         self.system_frame.grid(row=1, column=0, sticky="nsew")
-        # Uhr oben in der unteren Hälfte, also zwischen Mediaplayer und System. Ihre Höhe (3 cm) geben die drei
-        # Monitoring-Kacheln ab: sie teilen sich den Rest und werden dadurch je ca. 1 cm niedriger
+        # Uhr zwischen Mediaplayer und System, optisch gleiche Abstände nach oben und unten (GAP):
+        # die Warteschlange hat unten schon 4 px Außenabstand, die Überschrift "System" oben ca. 6 px Leerraum
         clock = ClockPanel(self.system_frame)
-        clock.pack(fill="x", padx=15, pady=(10, 4))
+        clock.pack(fill="x", padx=15, pady=(GAP - 4, GAP - 6))
         system_monitor = SystemMonitorPanel(self.system_frame)
-        system_monitor.pack(fill="both", expand=True, padx=15, pady=(4, 10))
+        system_monitor.pack(fill="both", expand=True, padx=15, pady=(0, 10))
 
         # ========================================================================================================
         # Texte

@@ -16,6 +16,7 @@ class QueueRow(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent", corner_radius=8)
         self.on_select = on_select
         self.uri = ""
+        self.number = str(number)
         self.grid_columnconfigure(1, weight=1)
 
         self.lbl_number = ctk.CTkLabel(self, text=str(number), width=22, anchor="e",
@@ -28,16 +29,18 @@ class QueueRow(ctk.CTkFrame):
                                        font=("Helvetica", QUEUE_ARTIST_SIZE, "bold"), text_color=COLORS["muted_text"])
         self.lbl_artist.grid(row=1, column=1, sticky="ew", pady=(0, 4))
 
-        # Klick und Hover auf der Fläche und auf allen Texten darauf
+        # Klick und Hover auf der Fläche und auf allen Texten darauf (leere Zeilen reagieren nicht)
         for widget in (self, self.lbl_number, self.lbl_title, self.lbl_artist):
             widget.bind("<Button-1>", lambda e: self._clicked())
-            widget.bind("<Enter>", lambda e: self.configure(fg_color=COLORS["card_hover"]))
+            widget.bind("<Enter>", lambda e: self.uri and self.configure(fg_color=COLORS["card_hover"]))
             widget.bind("<Leave>", lambda e: self.configure(fg_color="transparent"))
 
     def show(self, entry, fit):
-        self.uri = entry["uri"]
-        self.lbl_title.configure(text=fit(entry["title"], QUEUE_TITLE_SIZE, "bold"))
-        self.lbl_artist.configure(text=fit(entry["artist"], QUEUE_ARTIST_SIZE, "bold"))
+        """entry=None: leere Zeile (hält nur den Platz frei)."""
+        self.uri = entry["uri"] if entry else ""
+        self.lbl_number.configure(text=self.number if entry else "")
+        self.lbl_title.configure(text=fit(entry["title"], QUEUE_TITLE_SIZE, "bold") if entry else "")
+        self.lbl_artist.configure(text=fit(entry["artist"], QUEUE_ARTIST_SIZE, "bold") if entry else "")
 
     def _clicked(self):
         if self.uri:
@@ -69,15 +72,22 @@ class QueuePanel(ctk.CTkFrame):
                                           command=self._open_connect)
         self.btn_settings.pack(side="right")
 
-        self.lbl_hint = ctk.CTkLabel(inner, text="", font=("Helvetica", 12, "bold"),
+        # Immer 5 Zeilen: die Box ist dadurch immer gleich hoch, Uhr und Monitoring darunter springen nicht
+        self.rows_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        self.rows_frame.pack(fill="x")
+        self.rows = [QueueRow(self.rows_frame, i + 1, self._select) for i in range(5)]
+        for row in self.rows:
+            row.show(None, None)
+            row.pack(fill="x", pady=1)
+
+        # Hinweis bzw. Verbinden-Knopf liegen bei Bedarf als Decke über den Zeilen
+        self.overlay = ctk.CTkFrame(inner, fg_color=COLORS["card"])
+        self.lbl_hint = ctk.CTkLabel(self.overlay, text="", font=("Helvetica", 12, "bold"),
                                      text_color=COLORS["muted_text"], wraplength=260, justify="left", anchor="w")
-        self.btn_connect = ctk.CTkButton(inner, text="Mit Spotify verbinden", font=("Helvetica", 13, "bold"),
+        self.btn_connect = ctk.CTkButton(self.overlay, text="Mit Spotify verbinden", font=("Helvetica", 13, "bold"),
                                          fg_color=COLORS["good"], hover_color=COLORS["accent_hover"],
                                          text_color="#111111", height=36, corner_radius=18,
                                          command=self._open_connect)
-
-        self.rows_frame = ctk.CTkFrame(inner, fg_color="transparent")
-        self.rows = [QueueRow(self.rows_frame, i + 1, self._select) for i in range(5)]
 
     def _fit(self, text, size, weight):
         scaling = ctk.ScalingTracker.get_widget_scaling(self)
@@ -108,24 +118,27 @@ class QueuePanel(ctk.CTkFrame):
             return
         self._shown = mode
 
-        for widget in (self.lbl_hint, self.btn_connect, self.rows_frame):
+        for widget in (self.lbl_hint, self.btn_connect):
             widget.pack_forget()
         self.btn_settings.pack_forget() if mode[0] == "connect" else self.btn_settings.pack(side="right")
 
-        if mode[0] == "connect":
-            self.lbl_hint.configure(text="Für Warteschlange, Shuffle und Wiederholen bei Spotify einmal verbinden.")
-            self.lbl_hint.pack(fill="x", padx=4, pady=(4, 8))
-            self.btn_connect.pack(fill="x", padx=4)
-        elif mode[0] == "hint":
-            self.lbl_hint.configure(text=mode[1])
-            self.lbl_hint.pack(fill="x", padx=4, pady=4)
+        if mode[0] in ("connect", "hint"):
+            for row in self.rows:
+                row.show(None, None)
+            self.overlay.place(in_=self.rows_frame, x=0, y=0, relwidth=1, relheight=1)
+            self.overlay.lift()
+            if mode[0] == "connect":
+                self.lbl_hint.configure(text="Für Warteschlange, Shuffle und Wiederholen bei Spotify einmal verbinden.")
+                self.lbl_hint.pack(fill="x", padx=4, pady=(4, 8))
+                self.btn_connect.pack(fill="x", padx=4)
+            else:
+                self.lbl_hint.configure(text=mode[1])
+                self.lbl_hint.pack(fill="x", padx=4, pady=4)
         else:
-            self.rows_frame.pack(fill="x")
-            for row, entry in zip(self.rows, sp["queue"]):
+            self.overlay.place_forget()
+            queue = list(sp["queue"]) + [None] * (len(self.rows) - len(sp["queue"]))
+            for row, entry in zip(self.rows, queue):
                 row.show(entry, self._fit)
-                row.pack(fill="x", pady=1)
-            for row in self.rows[len(sp["queue"]):]:
-                row.pack_forget()
             # Breite ist erst nach dem Anzeigen bekannt: einmal nachträglich neu kürzen
             self.after(50, lambda: self._refit(sp))
 
