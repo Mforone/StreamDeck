@@ -9,6 +9,9 @@ from config import COLORS
 from ui.window_utils import center_over
 from core.hotkeys import send_hotkey
 from core import soundboard
+from ui.colors import contrast_text, mix
+
+SOUND_POLL_MS = 150  # so oft prüfen Sound-Knöpfe, ob ihr Sound gerade läuft
 
 
 def execute_button_action(app_data):
@@ -122,7 +125,37 @@ class AppButtonRow(ctk.CTkFrame):
                 command=lambda app=app_data: execute_button_action(app)
             )
 
+        self._watch_sound(btn, app_data)
         return btn
+
+    def _watch_sound(self, button, app_data):
+        """Sound-Knöpfe: grün, solange ihr Sound läuft, danach wieder in der eingestellten Farbe."""
+        if not isinstance(app_data, dict) or app_data.get("action_type") != "sound":
+            return
+        path = (app_data.get("action_data") or {}).get("sound_file", "")
+        normal_bg = app_data.get("bg_color", COLORS["card"])
+        normal_text = app_data.get("text_color", COLORS["text"])
+        playing_bg = COLORS["good"]
+        shown = {"playing": False}
+
+        def poll():
+            try:
+                if not button.winfo_exists():
+                    return  # Knopf wurde gelöscht oder die Leiste neu aufgebaut: Prüfen beenden
+            except Exception:
+                return
+            playing = soundboard.instance is not None and soundboard.instance.is_playing(path)
+            # Nur bei einer Änderung umfärben, nicht 7-mal pro Sekunde neu zeichnen
+            if playing != shown["playing"]:
+                shown["playing"] = playing
+                if playing:
+                    button.configure(fg_color=playing_bg, hover_color=mix(playing_bg, "#FFFFFF", 0.2),
+                                     text_color=contrast_text(playing_bg))
+                else:
+                    button.configure(fg_color=normal_bg, hover_color=COLORS["card_hover"], text_color=normal_text)
+            button.after(SOUND_POLL_MS, poll)
+
+        button.after(SOUND_POLL_MS, poll)
 
     def show_context_menu(self, event, app_data):
         """Erstellt ein Pop-up-Menü im Dark-Mode Design."""
