@@ -8,18 +8,8 @@ from config import COLORS
 # "c" ist in Tk die Einheit Zentimeter: winfo_fpixels("3c") rechnet echte Zentimeter in Pixel dieses Bildschirms um.
 CLOCK_HEIGHT = "3c"
 
-WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
-          "August", "September", "Oktober", "November", "Dezember"]
-
-
-def date_text(now):
-    """time.struct_time -> "Dienstag, 20. Oktober" (unabhängig von der Spracheinstellung von Windows)"""
-    return f"{WEEKDAYS[now.tm_wday]}, {now.tm_mday}. {MONTHS[now.tm_mon - 1]}"
-
-
 class ClockPanel(ctk.CTkFrame):
-    """Uhr in eigener Kachel: Stunden:Minuten groß, Sekunden kleiner daneben, Datum darunter."""
+    """Uhr in eigener Kachel: Stunden:Minuten so groß wie möglich, Sekunden kleiner daneben."""
 
     def __init__(self, master, **kwargs):
         super().__init__(master, fg_color=COLORS["card"], corner_radius=12, **kwargs)
@@ -47,21 +37,25 @@ class ClockPanel(ctk.CTkFrame):
             return
         now = time.localtime()
 
-        # Schriftgrößen aus der Höhe: Uhrzeit gut die Hälfte, Datum ein Fünftel (negative Größe = Pixel)
-        time_font = tkfont.Font(family="Helvetica", size=-int(h * 0.56), weight="bold")
-        seconds_font = tkfont.Font(family="Helvetica", size=-int(h * 0.28), weight="bold")
-        date_font = tkfont.Font(family="Helvetica", size=-int(h * 0.19), weight="bold")
-
+        # So groß wie die Kachel hoch ist; ist der Text zu breit, wird er verkleinert, bis er passt
         main = time.strftime("%H:%M", now)
         seconds = time.strftime(":%S", now)
-        main_width = time_font.measure(main)
-        total = main_width + seconds_font.measure(seconds)
-        left = (w - total) / 2
-        baseline = h * 0.64
+        size = int(h * 0.95)
+        while size > 10:
+            time_font = tkfont.Font(family="Helvetica", size=-size, weight="bold")
+            seconds_font = tkfont.Font(family="Helvetica", size=-int(size * 0.45), weight="bold")
+            main_width = time_font.measure(main)
+            total = main_width + seconds_font.measure(seconds)
+            if total <= w:
+                break
+            size -= 2
 
-        # Uhrzeit mittig; Sekunden auf derselben Grundlinie, damit sie unten bündig sitzen
-        canvas.create_text(left, baseline, text=main, anchor="sw", font=time_font, fill=COLORS["text"])
-        canvas.create_text(left + main_width, baseline - h * 0.05, text=seconds, anchor="sw",
-                           font=seconds_font, fill=COLORS["muted_text"])
-        canvas.create_text(w / 2, h * 0.84, text=date_text(now), anchor="center",
-                           font=date_font, fill=COLORS["muted_text"])
+        # Senkrecht mittig: Ziffern sind etwa 72 % der Schriftgröße hoch. "sw" setzt die Unterkante des Textfelds,
+        # darin steckt noch der Platz unter der Grundlinie (für g, p ...): den rechnen wir heraus.
+        left = (w - total) / 2
+        baseline = h / 2 + size * 0.36
+        canvas.create_text(left, baseline + time_font.metrics("descent"), text=main, anchor="sw",
+                           font=time_font, fill=COLORS["text"])
+        # Sekunden auf derselben Grundlinie: unten bündig mit der großen Uhrzeit
+        canvas.create_text(left + main_width, baseline + seconds_font.metrics("descent"), text=seconds,
+                           anchor="sw", font=seconds_font, fill=COLORS["muted_text"])

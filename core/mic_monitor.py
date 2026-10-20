@@ -119,9 +119,10 @@ class MicMonitor:
         self.settings.setdefault("threshold_db", -12.0)
         self.settings.setdefault("beep", True)
         self.settings.setdefault("device", DEFAULT_DEVICE)
+        self.settings.setdefault("beep_volume", BEEP_VOLUME)
         self.audio = audio
         self.trigger = BeepTrigger(self.settings["threshold_db"])
-        self._beep = make_beep_wav()
+        self._beep = make_beep_wav(volume=self.settings["beep_volume"])
         self._lock = threading.Lock()
         self._energies = []
         self._level_db = MIN_DB
@@ -163,6 +164,12 @@ class MicMonitor:
     def set_threshold(self, threshold_db):
         self.settings["threshold_db"] = float(threshold_db)
         self.trigger.threshold_db = float(threshold_db)
+
+    def set_beep_volume(self, volume):
+        """Lautstärke des Pieps 0..1: der Ton wird mit der neuen Lautstärke neu erzeugt."""
+        volume = max(0.0, min(1.0, float(volume)))
+        self.settings["beep_volume"] = round(volume, 2)
+        self._beep = make_beep_wav(volume=volume)
 
     def set_beep_enabled(self, enabled):
         self.settings["beep"] = bool(enabled)

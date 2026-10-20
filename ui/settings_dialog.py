@@ -246,9 +246,25 @@ class SettingsDialog(ctk.CTkToplevel):
         self.beep_switch = ctk.CTkSwitch(tab, text="Piepen, wenn ich zu laut bin", font=("Helvetica", 13, "bold"),
                                          text_color=COLORS["text"], progress_color=COLORS["good"],
                                          switch_width=46, switch_height=24, command=self._toggle_beep)
-        self.beep_switch.pack(anchor="w", padx=8, pady=(10, 14))
+        self.beep_switch.pack(anchor="w", padx=8, pady=(10, 6))
         if mic_settings.get("beep", True):
             self.beep_switch.select()
+
+        # Lautstärke des Pieps; beim Loslassen einmal zur Probe abspielen
+        beep_row = ctk.CTkFrame(tab, fg_color="transparent")
+        beep_row.pack(fill="x", padx=8, pady=(0, 14))
+        ctk.CTkLabel(beep_row, text="Lautstärke Piep", font=("Helvetica", 13, "bold"),
+                     text_color=COLORS["text"]).pack(side="left")
+        self.lbl_beep_volume = ctk.CTkLabel(beep_row, text="", width=46, font=("Helvetica", 13, "bold"),
+                                            text_color=COLORS["text"])
+        self.lbl_beep_volume.pack(side="right")
+        self.slider_beep = ctk.CTkSlider(beep_row, from_=0, to=1, number_of_steps=20, height=22,
+                                         button_color=COLORS["accent"], button_hover_color=COLORS["accent_hover"],
+                                         progress_color=COLORS["accent"], command=self._beep_volume_moved)
+        self.slider_beep.set(mic_settings.get("beep_volume", 0.35))
+        self.slider_beep.pack(side="left", fill="x", expand=True, padx=10)
+        self.slider_beep.bind("<ButtonRelease-1>", lambda e: self._beep_volume_released())
+        self.lbl_beep_volume.configure(text=f"{round(self.slider_beep.get() * 100)}%")
 
         row = ctk.CTkFrame(tab, fg_color="transparent")
         row.pack(fill="x", padx=8)
@@ -313,6 +329,15 @@ class SettingsDialog(ctk.CTkToplevel):
     def _choose_mic(self, label):
         self.mic.set_device(self._mic_label_to_name.get(label, ""))
         self._mic_devices_shown = None
+        if self.on_mic_change:
+            self.on_mic_change()
+
+    def _beep_volume_moved(self, value):
+        self.lbl_beep_volume.configure(text=f"{round(value * 100)}%")
+
+    def _beep_volume_released(self):
+        self.mic.set_beep_volume(self.slider_beep.get())
+        self.mic.play_beep()
         if self.on_mic_change:
             self.on_mic_change()
 
