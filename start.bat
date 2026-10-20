@@ -8,7 +8,26 @@ if errorlevel 1 (
     echo git pull ist fehlgeschlagen, starte mit dem lokalen Stand.
 )
 
-if not exist .venv\Scripts\python.exe python -m venv .venv
+rem Kaputte oder halbfertige .venv entfernen
+if exist .venv if not exist .venv\Scripts\python.exe rmdir /s /q .venv
+
+if not exist .venv\Scripts\python.exe (
+    rem Zuerst den Python-Launcher "py" versuchen, dann "python"
+    py -3 -m venv .venv 2>nul
+    if not exist .venv\Scripts\python.exe python -m venv .venv 2>nul
+)
+
+if not exist .venv\Scripts\python.exe (
+    echo.
+    echo Python wurde nicht gefunden.
+    echo Bitte Python von https://www.python.org/downloads/ installieren
+    echo und im Installer den Haken bei "Add python.exe to PATH" setzen.
+    echo Danach start.bat erneut ausfuehren.
+    echo.
+    pause
+    exit /b 1
+)
+
 .venv\Scripts\python.exe -m pip install -q -r requirements.txt
 .venv\Scripts\python.exe main.py
 
