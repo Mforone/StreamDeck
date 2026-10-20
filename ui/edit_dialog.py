@@ -4,6 +4,13 @@ from tkinter import colorchooser, filedialog
 from PIL import Image
 from config import COLORS
 from ui.window_utils import center_over
+from ui.hotkey_picker import HotkeyPicker
+
+ACTION_LABELS = {
+    "program": "Programm / App",
+    "url": "Webseite (URL)",
+    "hotkey": "Tastenkombination",
+}
 
 
 def get_contrast_text_color(hex_color: str) -> str:
@@ -39,7 +46,7 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.attributes("-topmost", True)
 
         # Auf dem Bildschirm des Control Panels öffnen, nicht auf dem Hauptbildschirm
-        center_over(self, parent, 420, 620)
+        center_over(self, parent, 420, 690)
         self.configure(fg_color=COLORS["card"])
 
         # Daten initialisieren
@@ -51,6 +58,7 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.current_path = action_data.get("path", "")
         self.current_url = action_data.get("url", "")
         self.current_action_type = self.button_data.get("action_type", "program")
+        self.current_hotkey = action_data.get("hotkey", []) or []
 
         self.setup_ui()
         self.update_preview()
@@ -143,7 +151,7 @@ class EditButtonDialog(ctk.CTkToplevel):
 
         self.btn_dropdown = ctk.CTkButton(
             container,
-            text="Programm / App  ▾" if self.current_action_type == "program" else "Webseite (URL)  ▾",
+            text=f"{ACTION_LABELS.get(self.current_action_type, ACTION_LABELS['program'])}  ▾",
             anchor="w",
             fg_color=COLORS["bg"],
             hover_color=COLORS["card_hover"],
@@ -174,6 +182,11 @@ class EditButtonDialog(ctk.CTkToplevel):
             command=self.browse_target_file
         )
         self.btn_browse_target.pack(side="right")
+
+        # Tastenkombination: statt Eingabefeld Tasten antippen oder aufnehmen
+        self.hotkey_picker = HotkeyPicker(container, keys=self.current_hotkey)
+        self.lbl_error = ctk.CTkLabel(container, text="", font=("Helvetica", 11, "bold"), text_color=COLORS["danger"],
+                                      height=14)
 
         self.update_target_field()
 
@@ -290,7 +303,7 @@ class EditButtonDialog(ctk.CTkToplevel):
         x = self.btn_dropdown.winfo_rootx()
         y = self.btn_dropdown.winfo_rooty() + self.btn_dropdown.winfo_height() + 4
         width = self.btn_dropdown.winfo_width()
-        popup.geometry(f"{width}x72+{x}+{y}")
+        popup.geometry(f"{width}x{8 + 34 * len(ACTION_LABELS)}+{x}+{y}")
 
         menu_frame = ctk.CTkFrame(
             popup,
@@ -329,7 +342,19 @@ class EditButtonDialog(ctk.CTkToplevel):
             height=30,
             command=lambda: select_option("url", "Webseite (URL)")
         )
-        btn_opt2.pack(fill="x", padx=4, pady=(2, 4))
+        btn_opt2.pack(fill="x", padx=4, pady=(2, 2))
+
+        btn_opt3 = ctk.CTkButton(
+            menu_frame,
+            text=ACTION_LABELS["hotkey"],
+            anchor="w",
+            fg_color="transparent",
+            hover_color=COLORS["card_hover"],
+            text_color=COLORS["text"],
+            height=30,
+            command=lambda: select_option("hotkey", ACTION_LABELS["hotkey"])
+        )
+        btn_opt3.pack(fill="x", padx=4, pady=(2, 4))
 
         # Schließt sich automatisch, wenn der Fokus verloren geht
         popup.bind("<FocusOut>", lambda e: popup.after(200, lambda: popup.destroy() if popup.winfo_exists() else None))
@@ -390,6 +415,16 @@ class EditButtonDialog(ctk.CTkToplevel):
 
     def update_target_field(self):
         self.entry_target.delete(0, "end")
+        self.lbl_error.pack_forget()
+
+        # Tastenkombination: Auswahl statt Eingabefeld an derselben Stelle zeigen
+        if self.current_action_type == "hotkey":
+            self.target_frame.pack_forget()
+            self.hotkey_picker.pack(fill="x", pady=(0, 15), after=self.btn_dropdown)
+            return
+        self.hotkey_picker.close_popup()
+        self.hotkey_picker.pack_forget()
+        self.target_frame.pack(fill="x", pady=(0, 15), after=self.btn_dropdown)
 
         if self.current_action_type == "program":
             self.entry_target.insert(0, self.current_path)
@@ -444,7 +479,16 @@ class EditButtonDialog(ctk.CTkToplevel):
         self.button_data["text_color"] = self.current_text
         self.button_data["icon_path"] = self.current_icon
 
-        if self.current_action_type == "program":
+        if self.current_action_type == "hotkey":
+            keys = self.hotkey_picker.get()
+            if not any(k not in ("ctrl", "shift", "alt", "win") for k in keys):
+                # Ohne Haupttaste passiert nichts: lieber Hinweis zeigen als einen wirkungslosen Knopf speichern
+                self.lbl_error.configure(text="Bitte eine Taste wählen (nicht nur Strg/Umschalt/Alt/Win).")
+                self.lbl_error.pack(fill="x", after=self.hotkey_picker)
+                return
+            self.button_data["action_type"] = "hotkey"
+            self.button_data["action_data"] = {"path": "", "url": "", "hotkey": keys, "sound_file": ""}
+        elif self.current_action_type == "program":
             self.button_data["action_type"] = "program"
             self.button_data["action_data"] = {"path": target_val, "url": "", "hotkey": [], "sound_file": ""}
         else:

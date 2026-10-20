@@ -4,7 +4,7 @@ Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Co
 
 ## Funktionen
 
-- **App-Knöpfe** (linke Leiste): starten Programme oder öffnen Webseiten, mit eigenem Namen, Icon und Farben. Bearbeiten und Löschen über das Knopf-Menü, neue Knöpfe über „+ App-Button“.
+- **App-Knöpfe** (linke Leiste): starten Programme, öffnen Webseiten oder senden Tastenkombinationen an das Programm, das gerade vorne ist (Tasten antippen oder auf der Tastatur aufnehmen), mit eigenem Namen, Icon und Farben. Bearbeiten und Löschen über das Knopf-Menü, neue Knöpfe über „+ App-Button“.
 - **Audio-Mixer** (Mitte): Lautstärke und Stummschaltung für das ganze System und für jede Anwendung, die gerade Ton ausgibt.
 - **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Tippen auf dem Touchscreen springt die Maus dorthin zurück, wo sie vorher war. Mit der echten Maus lässt sich das Panel ganz normal bedienen und einstellen. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
 - **Einstellungen** (⚙ neben „Mediaplayer“): Reiter *Mixer* legt für die Kanäle 2 bis 8 eine feste App fest, die den Kanal automatisch belegt, sobald sie Ton abgibt, und eine eigene Farbe für die ganze Kanal-Karte. Gibt eine App 10 Sekunden lang keinen Ton ab, wird ihr Kanal wieder frei (einstellbar über `"mixer_idle_seconds"` unter `settings` in `data/config.json`). Zur Auswahl stehen alle Apps, die je Ton abgegeben haben (Verlauf in `data/audio_apps.json`). Reiter *Monitor* zeigt alle Bildschirme mit Auflösung und legt fest, auf welchem das Panel läuft (sofort und bei jedem Start).
@@ -57,6 +57,8 @@ Alle Knöpfe stehen in `data/config.json`. Die Datei wird beim ersten Start mit 
 | `ui/settings_dialog.py` | Einstellungen (Mixer-Kanäle, Monitor) |
 | `core/mic_monitor.py` | Mikrofon-Überwachung, Pegel in dBFS, Piepton |
 | `ui/level_meter.py` | Pegelanzeige grün/gelb/rot |
+| `core/hotkeys.py` | Tastentabelle und Senden von Tastenkombinationen (Windows SendInput) |
+| `ui/hotkey_picker.py` | Tastenkombination auswählen oder aufnehmen |
 | `ui/colors.py` | Farbhilfen (mischen, lesbare Schrift) |
 | `ui/spotify_ui.py` | Warteschlange und Verbinden-Dialog |
 | `ui/system_monitor.py` | Dreiviertelkreis-Anzeigen des Systemmonitors |

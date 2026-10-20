@@ -7,6 +7,7 @@ from core.config_manager import save_config, load_config
 from ui.edit_dialog import EditButtonDialog
 from config import COLORS
 from ui.window_utils import center_over
+from core.hotkeys import send_hotkey
 
 
 def execute_button_action(app_data):
@@ -33,6 +34,10 @@ def execute_button_action(app_data):
             if not (url.startswith("http://") or url.startswith("https://")):
                 url = "https://" + url
             webbrowser.open(url)
+
+    elif action_type == "hotkey":
+        # Geht an das Fenster, das gerade vorne ist (das Panel nimmt keinem Fenster den Fokus)
+        send_hotkey(action_data.get("hotkey", []))
 
 
 class AppButtonRow(ctk.CTkFrame):
