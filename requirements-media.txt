@@ -1,0 +1,5 @@
+winrt-runtime
+winrt-Windows.Foundation
+winrt-Windows.Media
+winrt-Windows.Media.Control
+winrt-Windows.Storage.Streams

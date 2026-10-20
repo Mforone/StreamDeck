@@ -8,7 +8,7 @@ Ein Software-Stream-Deck für Windows im „Steam Deck Style“: ein Vollbild-Co
 - **Audio-Mixer** (Mitte): Lautstärke und Stummschaltung für das ganze System und für jede Anwendung, die gerade Ton ausgibt.
 - **Fokus-Schutz**: Das Panel nimmt keinem anderen Fenster den Fokus weg (gedacht für einen Nebenbildschirm). Nach einem Tippen auf dem Touchscreen springt die Maus dorthin zurück, wo sie vorher war. Mit der echten Maus lässt sich das Panel ganz normal bedienen und einstellen. Abschaltbar mit `"return_cursor": false` unter `settings` in `data/config.json`. Beendet wird die App über das ✕ oben links.
 - **Systemmonitor** (rechts unten): Auslastung von CPU, GPU und RAM als Dreiviertelkreis, grün unter 60 %, gelb ab 60 %, rot ab 85 %. RAM zusätzlich in GB. Die GPU wird wie im Task-Manager über die Windows-Leistungsindikatoren gelesen (NVIDIA, AMD, Intel).
-- **Mediaplayer** (rechts oben): in Arbeit.
+- **Mediaplayer** (rechts oben): zeigt Cover, Titel und Interpret von dem, was gerade läuft (Spotify, YouTube im Browser, VLC …), mit Zeitleiste zum Spulen, Zurück/Pause/Weiter sowie Shuffle und Wiederholen, wenn die App das unterstützt. Nutzt die Windows-Medienschnittstelle (Pakete in `requirements-media.txt`, optional).
 
 ## Voraussetzungen
 
@@ -46,4 +46,6 @@ Alle Knöpfe stehen in `data/config.json`. Die Datei wird beim ersten Start mit 
 | `ui/edit_dialog.py` | Dialog zum Bearbeiten eines Knopfs |
 | `ui/audio_mixer.py` | Mixer-Ansicht |
 | `core/system_monitor.py` | Misst CPU, RAM (psutil) und GPU (Windows-PDH) im Hintergrund |
+| `core/media_session.py` | Liest und steuert die laufende Wiedergabe über die Windows-Medienschnittstelle |
+| `ui/media_player.py` | Mediaplayer-Ansicht |
 | `ui/system_monitor.py` | Dreiviertelkreis-Anzeigen des Systemmonitors |

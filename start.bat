@@ -39,6 +39,15 @@ rem wenn git pull diese Datei waehrend der Ausfuehrung selbst aktualisiert.
         exit /b 1
     )
 
+    rem Windows-Medienschnittstelle fuer den Mediaplayer: optional, gibt es nicht fuer jede Python-Version.
+    rem Schlaegt das fehl, startet die App trotzdem, nur der Mediaplayer zeigt "Nicht verfuegbar".
+    .venv\Scripts\python.exe -m pip install -q --only-binary=:all: -r requirements-media.txt
+    if errorlevel 1 (
+        echo.
+        echo Hinweis: Mediaplayer-Pakete nicht installierbar, die App startet ohne Mediaplayer.
+        timeout /t 5
+    )
+
     rem pythonw.exe startet ohne Konsole, start wartet nicht auf das Ende: das Fenster schliesst sich sofort
     rem Ausgaben und Fehler der App stehen in data\streamdeck.log
     start "" .venv\Scripts\pythonw.exe main.py

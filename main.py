@@ -9,6 +9,8 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = log_file
     sys.stderr = log_file
 
+print(f"Python {sys.version}")
+
 from core.config_manager import load_config
 from ui.main_window import ControlPanelApp
 

@@ -5,6 +5,7 @@ from ui.StreamDeckFunktion import *
 from core.config_manager import save_config
 from ui.audio_mixer import AudioMixerPanel
 from ui.system_monitor import SystemMonitorPanel
+from ui.media_player import MediaPlayerPanel
 from core.window_focus import FocusKeeper
 
 # DPI-Skalierungsfehler unter Windows beheben (MUSS VOR CTK-INIT SEIN ODER AM ANFANG DER INIT)
@@ -188,6 +189,8 @@ class ControlPanelApp(ctk.CTk):
             corner_radius=15
         )
         self.media_frame.grid(row=0, column=0, sticky="nsew")
+        media_player = MediaPlayerPanel(self.media_frame)
+        media_player.pack(fill="both", expand=True, padx=15, pady=10)
 
         # Systemmonitor
         self.system_frame = ctk.CTkFrame(
