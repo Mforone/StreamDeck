@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# Persönliche Konfiguration (wird beim ersten Start automatisch angelegt)
+data/config.json

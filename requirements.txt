@@ -1,0 +1,3 @@
+pycaw
+customtkinter
+psutil
