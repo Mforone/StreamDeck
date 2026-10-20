@@ -9,3 +9,6 @@ venv/
 
 # Persönliche Konfiguration (wird beim ersten Start automatisch angelegt)
 data/config.json
+
+# Logdatei (Start ohne Konsole über pythonw.exe)
+data/*.log

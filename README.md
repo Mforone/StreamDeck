@@ -24,7 +24,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Danach reicht ein Doppelklick auf `start.bat`: Sie holt per `git pull` den neuesten Stand, installiert fehlende Pakete und startet die App.
+Danach reicht ein Doppelklick auf `start.bat`: Sie holt per `git pull` den neuesten Stand, installiert fehlende Pakete und startet die App ohne Konsolenfenster. Meldungen und Fehler stehen dann in `data/streamdeck.log`.
 
 Die App startet im Vollbild, das ✕ oben links beendet sie.
 
