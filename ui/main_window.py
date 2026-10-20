@@ -7,6 +7,9 @@ from ui.audio_mixer import AudioMixerPanel
 from ui.system_monitor import SystemMonitorPanel
 from ui.media_player import MediaPlayerPanel
 from core.window_focus import FocusKeeper
+from core.audio_apps import AudioAppWatcher
+from core.monitors import choose_monitor, list_monitors, monitor_settings
+from ui.settings_dialog import SettingsDialog
 
 # DPI-Skalierungsfehler unter Windows beheben (MUSS VOR CTK-INIT SEIN ODER AM ANFANG DER INIT)
 try:
@@ -22,15 +25,20 @@ class ControlPanelApp(ctk.CTk):
         super().__init__()
         self.config_data = config_data if config_data else {}
 
-        # Bildschirmmaße Auslesen
-        screen_width = self.winfo_screenwidth()
-        screen_height = self.winfo_screenheight()
+        # Monitor aus den Einstellungen wiederfinden (sonst Hauptbildschirm) und dessen Maße nehmen
+        self.monitor = choose_monitor(list_monitors(), self.config_data.get("settings", {}).get("monitor"))
+        if self.monitor:
+            screen_width, screen_height = self.monitor["width"], self.monitor["height"]
+            screen_x, screen_y = self.monitor["x"], self.monitor["y"]
+        else:
+            screen_width, screen_height = self.winfo_screenwidth(), self.winfo_screenheight()
+            screen_x, screen_y = 0, 0
 
         # Fenster-Eigenschaften
         self.title("Control Panel")
-        print (screen_width, screen_height)
-        self.geometry(f"{screen_width}x{screen_height}+0+0")
-        self.attributes("-fullscreen", True) # Fullscreen
+        print(f"Monitor {self.monitor['device'] if self.monitor else '?'}: {screen_width} {screen_height} bei {screen_x},{screen_y}")
+        self.geometry(f"{screen_width}x{screen_height}+{screen_x}+{screen_y}")
+        self.attributes("-fullscreen", True) # Fullscreen (auf dem Monitor, auf dem das Fenster gerade liegt)
         self.bind("<Escape>", lambda event: self.destroy()) # Mit ESC schließen
 
         # Farbliches Aussehen
@@ -163,8 +171,11 @@ class ControlPanelApp(ctk.CTk):
             corner_radius=0
         )
         self.mixer_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
-        audio_mixer = AudioMixerPanel(self.mixer_frame)
-        audio_mixer.pack(fill="both", expand=True, padx=10, pady=10)
+        # Merkt sich im Hintergrund, welche Apps laufen und welche je Ton abgegeben haben
+        self.audio_watcher = AudioAppWatcher()
+        channel_settings = self.config_data.setdefault("settings", {}).setdefault("mixer_channels", {})
+        self.audio_mixer = AudioMixerPanel(self.mixer_frame, watcher=self.audio_watcher, channel_settings=channel_settings)
+        self.audio_mixer.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Sidebar Rechts
         self.sidebar_r = ctk.CTkFrame(
@@ -189,7 +200,7 @@ class ControlPanelApp(ctk.CTk):
             corner_radius=15
         )
         self.media_frame.grid(row=0, column=0, sticky="nsew")
-        media_player = MediaPlayerPanel(self.media_frame)
+        media_player = MediaPlayerPanel(self.media_frame, on_settings=self.open_settings)
         media_player.pack(fill="both", expand=True, padx=15, pady=10)
 
         # Systemmonitor
@@ -266,6 +277,31 @@ class ControlPanelApp(ctk.CTk):
     # ========================================================================================================
 
     # Funktion für das Einfügen neuer Buttons
+
+    def open_settings(self):
+        SettingsDialog(self, self.audio_watcher, self.config_data.setdefault("settings", {}),
+                       on_mixer_change=self.on_mixer_settings_changed,
+                       on_monitor_change=self.move_to_monitor,
+                       current_device=self.monitor["device"] if self.monitor else None)
+
+    def on_mixer_settings_changed(self):
+        save_config(self.config_data)
+        self.audio_mixer.apply_channel_settings()
+
+    def move_to_monitor(self, monitor):
+        """Panel auf einen anderen Monitor legen und das für den nächsten Start speichern."""
+        self.monitor = monitor
+        self.config_data.setdefault("settings", {})["monitor"] = monitor_settings(monitor)
+        save_config(self.config_data)
+
+        # Vollbild kurz aus, Fenster auf den Ziel-Monitor schieben, Vollbild wieder an.
+        # Nur die Position setzen: Breite/Höhe würde customtkinter mit der Skalierung umrechnen.
+        self.attributes("-fullscreen", False)
+        self.geometry(f"+{monitor['x']}+{monitor['y']}")
+        self.update_idletasks()
+        self.attributes("-fullscreen", True)
+        self.button_frame.configure(height=monitor["height"] - 122)
+        print(f"Monitor gewechselt: {monitor['device']} {monitor['width']}x{monitor['height']}")
 
     def add_empty_button_row(self):
         """Erstellt zwei neue Platzhalter-Buttons, speichert sie in der config.json und lädt die UI neu."""

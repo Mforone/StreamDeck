@@ -14,5 +14,9 @@ data/config.json
 data/spotify_token.json
 data/spotify_token.json.tmp
 
+# Verlauf der Apps mit Ton (persönlich)
+data/audio_apps.json
+data/audio_apps.json.tmp
+
 # Logdatei (Start ohne Konsole über pythonw.exe)
 data/*.log

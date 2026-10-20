@@ -52,7 +52,7 @@ def fit_text(text, font, max_width):
 
 
 class MediaPlayerPanel(ctk.CTkFrame):
-    def __init__(self, master, session=None, spotify=None, **kwargs):
+    def __init__(self, master, session=None, spotify=None, on_settings=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
 
         # session=False / spotify=False nur zum Testen ohne echte Windows- bzw. Spotify-Anbindung
@@ -67,9 +67,15 @@ class MediaPlayerPanel(ctk.CTkFrame):
         self.icon_font_family = next((f for f in ICON_FONTS if f in families), None)
         self.icons = ICONS if self.icon_font_family else FALLBACK_ICONS
 
-        header = ctk.CTkLabel(self, text="🎵 Mediaplayer", font=("Helvetica", 14, "bold"),
-                              text_color=COLORS["text"], anchor="w")
+        header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(header, text="🎵 Mediaplayer", font=("Helvetica", 14, "bold"),
+                     text_color=COLORS["text"], anchor="w").pack(side="left")
+        if on_settings is not None:
+            # Zahnrad: Einstellungen (Mixer-Kanäle, Monitor)
+            ctk.CTkButton(header, text="⚙", width=32, height=32, corner_radius=16, font=("Helvetica", 17),
+                          fg_color="transparent", hover_color=COLORS["card_hover"], text_color=COLORS["muted_text"],
+                          command=on_settings).pack(side="right")
 
         # Karte "läuft gerade": nimmt nur so viel Höhe, wie sie braucht, darunter die Spotify-Warteschlange
         self.card = ctk.CTkFrame(self, fg_color=COLORS["card"], corner_radius=12)
