@@ -22,6 +22,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Danach reicht ein Doppelklick auf `start.bat`: Sie holt per `git pull` den neuesten Stand, installiert fehlende Pakete und startet die App.
+
 Die App startet im Vollbild, `Esc` beendet sie.
 
 ## Konfiguration
