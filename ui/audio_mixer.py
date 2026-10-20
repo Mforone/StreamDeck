@@ -279,7 +279,6 @@ class AudioChannelStrip(ctk.CTkFrame):
                     self._active_popup = None
 
         click_binding = self.winfo_toplevel().bind("<Button-1>", on_global_click, add="+")
-        popup.focus_force()
 
     def on_volume_change(self, value):
         percent = int(value * 100)

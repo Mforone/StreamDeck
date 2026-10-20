@@ -1,6 +1,7 @@
 import ctypes
 import os
 import sys
+import tkinter as tk
 
 # Das Control Panel läuft auf einem eigenen Bildschirm und soll niemandem den Fokus klauen:
 # 1. Das Hauptfenster bekommt WS_EX_NOACTIVATE. Klicks kommen an, aber das Fenster,
@@ -57,6 +58,7 @@ class FocusKeeper:
         self.hwnd = None
         self.last_foreground = None
         self.last_cursor = None
+        self._previous_sample = None
         self._style_reported = False
 
         if sys.platform != "win32":
@@ -110,8 +112,11 @@ class FocusKeeper:
             rect = _RECT()
             if self.user32.GetCursorPos(ctypes.byref(point)) and self.user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
                 inside = rect.left <= point.x < rect.right and rect.top <= point.y < rect.bottom
-                if not inside:
-                    self.last_cursor = (point.x, point.y)
+                sample = (point.x, point.y)
+                # Nur Ruhepositionen merken, nicht den Punkt, an dem die Maus auf dem Weg zum Panel vorbeikam
+                if not inside and sample == self._previous_sample:
+                    self.last_cursor = sample
+                self._previous_sample = sample
 
             self._ensure_style()
         except Exception as e:
@@ -120,36 +125,31 @@ class FocusKeeper:
         self.root.after(TRACK_INTERVAL_MS, self._track)
 
     def _on_release(self, event):
-        # Nur Klicks im Hauptfenster, nicht im Bearbeiten-Dialog oder in Popups
-        try:
-            if event.widget.winfo_toplevel() is not self.root:
-                return
-        except Exception:
-            return
+        # Klicks in Popups und Dialogen zählen mit: nach der Auswahl/dem Speichern ist das Popup zu
         self.root.after(RESTORE_DELAY_MS, self._restore)
 
-    def _popup_has_focus(self):
-        """True, wenn der Klick gerade ein Popup/Dialog geöffnet hat (die holen sich per focus_force den Fokus)."""
-        try:
-            focused = self.root.focus_get()
-        except Exception:
-            return False
-        if focused is None:
-            return False
-        try:
-            return focused.winfo_toplevel() is not self.root
-        except Exception:
-            return False
+    def _other_window_open(self, widget=None):
+        """True, solange noch ein Popup oder Dialog der App offen ist (dann bleibt die Maus, wo sie ist)."""
+        widget = widget or self.root
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Toplevel):
+                return True
+            if self._other_window_open(child):
+                return True
+        return False
 
     def _restore(self):
-        if self._popup_has_focus():
+        try:
+            if self._other_window_open():
+                return
+        except Exception:
             return
 
         if self.return_cursor and self.last_cursor:
             self.user32.SetCursorPos(*self.last_cursor)
 
-        # Rückfall, falls NOACTIVATE nicht greift: nur wenn das Panel selbst vorne ist,
-        # damit ein gerade gestartetes Programm (Spotify, Discord ...) vorne bleiben darf
+        # Rückfall, falls NOACTIVATE nicht greift oder ein Popup den Fokus hatte: nur wenn die App
+        # selbst vorne ist, damit ein gerade gestartetes Programm (Spotify, Discord ...) vorne bleiben darf
         foreground = self.user32.GetForegroundWindow()
-        if foreground == self.hwnd and self.last_foreground and self.user32.IsWindow(self.last_foreground):
+        if (not foreground or self._is_own_window(foreground)) and self.last_foreground and self.user32.IsWindow(self.last_foreground):
             self.user32.SetForegroundWindow(self.last_foreground)
